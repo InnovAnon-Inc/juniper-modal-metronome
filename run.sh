@@ -4,5 +4,4 @@ set -euxo nounset -o pipefail
 (( ! $# ))
 [[ -n ${VIRTUAL_ENV:-} ]] ||
 . ~/venv/bin/activate
-./app.py
-
+python app.py

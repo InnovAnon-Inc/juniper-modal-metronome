@@ -173,6 +173,7 @@ MODE_NAMES = {
     "Neapolitan Minor": ["Neapolitan Minor", "Lydian #6 #3", "Major #5", "Hungarian Gypsy", "Locrian Major", "Ionian #2", "Ultra Locrian"]
 }
 
+# 1 - 4 - 5 - 6 - 3 - 2 - 7 Chord Progression Order
 CHORD_PROGRESSION_ORDER = [0, 3, 4, 5, 2, 1, 6]
 
 def get_parallel_mode_pitches(parent_name: str, mode_degree: int, tonic_midi: int) -> list[int]:
@@ -296,6 +297,7 @@ class MasterClock:
         return f"{name}{max(1, octave - 1)}"
 
     def get_tonic_drones(self, root_name: str) -> tuple[str, str]:
+        """Returns octave 0 (infrasonic boundary) and octave 1 (audible sub) notes."""
         return f"{root_name}0", f"{root_name}1"
 
     async def run(self):
@@ -359,7 +361,7 @@ async def ws_handler(websocket):
         CONNECTED_CLIENTS.remove(websocket)
 
 # ==========================================
-# INLINE HTML WEBPAGE WITH BACKGROUND AUDIO UNLOCK
+# INLINE HTML WEBPAGE WITH WEB AUDIO API SYNTH
 # ==========================================
 HTML_PAGE = """<!DOCTYPE html>
 <html lang="en">
@@ -381,9 +383,6 @@ HTML_PAGE = """<!DOCTYPE html>
     <h1>CRT Clock Sync Node</h1>
     <button id="start-btn">ENABLE AUDIO SYNC</button>
     <div id="status">Audio Engine Standing By...</div>
-
-    <!-- SILENT AUDIO ELEMENT TO KEEP MOBILE OS AUDIO SESSION ALIVE -->
-    <audio id="silent-keepalive" loop playsinline src="data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA="></audio>
 
     <div class="display-box">
         <div>Tick: <span id="lbl-tick">0</span></div>
@@ -409,11 +408,12 @@ HTML_PAGE = """<!DOCTYPE html>
         let audioCtx = null;
         let ws = null;
         
-        let droneOsc0 = null;
+        let droneOsc0 = null; // Infrasonic Tonic Drone (Octave 0)
         let droneGain0 = null;
-        let droneOsc1 = null;
+        let droneOsc1 = null; // Sub Tonic Drone (Octave 1)
         let droneGain1 = null;
-        let subRootOsc = null;
+        
+        let subRootOsc = null; // Active Chord Root Doubler Drone
         let subRootGain = null;
 
         function noteToFreq(noteStr, refA4) {
@@ -424,6 +424,7 @@ HTML_PAGE = """<!DOCTYPE html>
         }
 
         function initDrones(refA4) {
+            // Master Infrasonic Tonic Drone (Octave 0 ~16-20 Hz)
             droneOsc0 = audioCtx.createOscillator();
             droneGain0 = audioCtx.createGain();
             droneOsc0.type = 'sine';
@@ -433,6 +434,7 @@ HTML_PAGE = """<!DOCTYPE html>
             droneGain0.connect(audioCtx.destination);
             droneOsc0.start();
 
+            // Master Sub-Tonic Drone (Octave 1 ~32-40 Hz)
             droneOsc1 = audioCtx.createOscillator();
             droneGain1 = audioCtx.createGain();
             droneOsc1.type = 'sine';
@@ -442,6 +444,7 @@ HTML_PAGE = """<!DOCTYPE html>
             droneGain1.connect(audioCtx.destination);
             droneOsc1.start();
 
+            // Sustained Sub-Root Doubler Drone
             subRootOsc = audioCtx.createOscillator();
             subRootGain = audioCtx.createGain();
             subRootOsc.type = 'sine';
@@ -454,18 +457,21 @@ HTML_PAGE = """<!DOCTYPE html>
 
         function updateDroneFreqs(t0, t1, targetSubRootNote, refA4) {
             if (droneOsc0) {
-                droneOsc0.frequency.setTargetAtTime(noteToFreq(t0, refA4), audioCtx.currentTime, 0.25);
+                let freq0 = noteToFreq(t0, refA4);
+                droneOsc0.frequency.setTargetAtTime(freq0, audioCtx.currentTime, 0.25);
             }
             if (droneOsc1) {
-                droneOsc1.frequency.setTargetAtTime(noteToFreq(t1, refA4), audioCtx.currentTime, 0.25);
+                let freq1 = noteToFreq(t1, refA4);
+                droneOsc1.frequency.setTargetAtTime(freq1, audioCtx.currentTime, 0.25);
             }
             if (subRootOsc) {
-                subRootOsc.frequency.setTargetAtTime(noteToFreq(targetSubRootNote, refA4), audioCtx.currentTime, 0.15);
+                let targetSubRootFreq = noteToFreq(targetSubRootNote, refA4);
+                subRootOsc.frequency.setTargetAtTime(targetSubRootFreq, audioCtx.currentTime, 0.15);
             }
         }
 
         function playTone(freq, duration, releaseTime = 2.5, volume = 0.4) {
-            if (!audioCtx || audioCtx.state !== 'running') return;
+            if (!audioCtx) return;
             let osc1 = audioCtx.createOscillator();
             let osc2 = audioCtx.createOscillator();
             let gain = audioCtx.createGain();
@@ -487,33 +493,13 @@ HTML_PAGE = """<!DOCTYPE html>
 
             osc1.start();
             osc2.start();
+            
             osc1.stop(totalTime);
             osc2.stop(totalTime);
         }
 
-        function setupMediaSession() {
-            if ('mediaSession' in navigator) {
-                navigator.mediaSession.metadata = new MediaMetadata({
-                    title: "Compound Clock Engine",
-                    artist: "Generative Synth Node",
-                    album: "CRT Modal Clock"
-                });
-                navigator.mediaSession.setActionHandler('play', () => {
-                    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
-                });
-                navigator.mediaSession.setActionHandler('pause', () => {});
-            }
-        }
-
         document.getElementById('start-btn').addEventListener('click', () => {
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            
-            // Start silent audio keepalive loop for mobile OS
-            const silentAudio = document.getElementById('silent-keepalive');
-            silentAudio.play().then(() => {
-                setupMediaSession();
-            }).catch(e => console.log("Silent keepalive setup:", e));
-
             document.getElementById('start-btn').style.display = 'none';
             document.getElementById('status').innerText = 'Syncing with Server...';
 
@@ -553,15 +539,6 @@ HTML_PAGE = """<!DOCTYPE html>
                     playTone(freq, 0.5, 2.0, 0.25);
                 }
             };
-        });
-
-        // Ensure AudioContext resumes instantly if the OS pauses it during tab/screen switches
-        document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible' && audioCtx) {
-                if (audioCtx.state === 'suspended') {
-                    audioCtx.resume();
-                }
-            }
         });
     </script>
 </body>
