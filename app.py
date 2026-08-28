@@ -37,8 +37,6 @@ def bjorklund(steps: int, pulses: int) -> list[int]:
         count = min(num_patterns, num_remainders)
         for i in range(count):
             pattern[i].extend(remainder.pop(0))
-        pattern.extend(remainder)
-        return [item for sublist in pattern for item in sublist]
 
     pattern.extend(remainder)
     return [item for sublist in pattern for item in sublist]
@@ -300,11 +298,6 @@ class MasterClock:
 
             minute_tick = elapsed_seconds % CHORD_DURATION_TICKS
 
-            # -------------------------------------------------------------
-            # TIMING SHIFTS:
-            # Lower/Inner Voices chime on the Minute (:00)
-            # Upper/Outer Voices chime on the Half-Minute (:30) -> Shifted +30s
-            # -------------------------------------------------------------
             inner_triad_trigs = [self.master_tick % m == 0 for m in self.moduli]
             outer_triad_trigs = [(self.master_tick + 30) % m == 0 for m in self.moduli]
 
@@ -328,7 +321,7 @@ class MasterClock:
                 "mode": inner_chord_data["meta"]["mode"],
                 "scale_solfege": inner_chord_data["meta"]["scale_solfege"],
 
-                # Outer Polytonal Loop (+2 Octaves / Steps once per full inner loop cycle)
+                # Outer Polytonal Loop
                 "outer_chord": outer_chord_data["notes"],
                 "outer_solfege": outer_chord_data["solfege"],
                 "outer_key": outer_chord_data["meta"]["key"],
@@ -520,11 +513,10 @@ HTML_PAGE = """<!DOCTYPE html>
             }
         }
 
-        document.getElementById('start-btn').addEventListener('click', async () => {
-            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-            audioCtx = new AudioContextClass();
+        document.getElementById('start-btn').addEventListener('click', () => {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             if (audioCtx.state === 'suspended') {
-                await audioCtx.resume();
+                audioCtx.resume();
             }
 
             const silentAudio = document.getElementById('silent-keepalive');
@@ -569,7 +561,7 @@ HTML_PAGE = """<!DOCTYPE html>
 
                 updateDroneFreqs(data.drone_tonic_0, data.drone_tonic_1, data.sub_root, data.a4_freq);
 
-                // Lower/Inner Voices (Phase 0s -> Chimes together at :00)
+                // Lower/Inner Voices
                 data.inner_triad_trigs.forEach((trig, idx) => {
                     if (trig) {
                         let innerFreq = noteToFreq(data.chord[idx], data.a4_freq);
@@ -577,7 +569,7 @@ HTML_PAGE = """<!DOCTYPE html>
                     }
                 });
 
-                // Upper/Outer Voices (Phase +30s -> Chimes together at :30)
+                // Upper/Outer Voices
                 data.outer_triad_trigs.forEach((trig, idx) => {
                     if (trig) {
                         let outerFreq = noteToFreq(data.outer_chord[idx], data.a4_freq);
@@ -585,13 +577,13 @@ HTML_PAGE = """<!DOCTYPE html>
                     }
                 });
 
-                // Inner Euclidean Rhythm Trigger (Voice 4)
+                // Inner Euclidean Trigger
                 if (data.v4_trig) {
                     let freq = noteToFreq(data.chord[3], data.a4_freq);
                     playTone(freq, 0.5, 2.0, 0.25, 'sine');
                 }
 
-                // Outer Euclidean Rhythm Trigger (Voice 4 Counterpoint)
+                // Outer Euclidean Trigger
                 if (data.v4_trig_outer) {
                     let outerFreq = noteToFreq(data.outer_chord[3], data.a4_freq);
                     playTone(outerFreq, 0.5, 2.0, 0.15, 'triangle');

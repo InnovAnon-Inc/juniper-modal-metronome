@@ -13,8 +13,8 @@ import websockets
 # ==========================================
 # CONFIGURATION & TUNING
 # ==========================================
-HTTP_PORT = 8000
-WS_PORT = 65432
+HTTP_PORT = 8002
+WS_PORT = 65431
 BPM = 60                       # 1 tick per second
 TICK_DURATION = 60.0 / BPM
 A4_FREQ = 432.0                # Master Reference Pitch
@@ -521,7 +521,7 @@ HTML_PAGE = """<!DOCTYPE html>
             initDrones(432.0);
 
             let wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            let wsUrl = wsProtocol + '//' + window.location.hostname + ':65432';
+            let wsUrl = wsProtocol + '//' + window.location.hostname + ':65431';
             ws = new WebSocket(wsUrl);
 
             ws.onmessage = (event) => {
