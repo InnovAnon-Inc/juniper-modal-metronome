@@ -1,0 +1,21 @@
+{
+  "master_tick": 60,
+  "inner_family_order": [
+    "Major",
+    "Harmonic Minor",
+    "Melodic Minor",
+    "Harmonic Major",
+    "Double Harmonic Major",
+    "Neapolitan Major",
+    "Neapolitan Minor"
+  ],
+  "outer_family_order": [
+    "Major",
+    "Harmonic Minor",
+    "Melodic Minor",
+    "Harmonic Major",
+    "Double Harmonic Major",
+    "Neapolitan Major",
+    "Neapolitan Minor"
+  ]
+}

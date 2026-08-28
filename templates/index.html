@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CRT Polytonal Clock Engine</title>
+    <style>
+        body { background: #121212; color: #00ffcc; font-family: monospace; text-align: center; padding: 20px; }
+        button { background: #00ffcc; color: #121212; border: none; padding: 15px 30px; font-size: 1.2rem; font-weight: bold; cursor: pointer; border-radius: 5px; }
+        #status { margin-top: 20px; font-size: 1.1rem; }
+        .display-container { display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; max-width: 1100px; margin: 20px auto; }
+        .display-box { border: 1px solid #00ffcc; padding: 15px; flex: 1; min-width: 320px; text-align: left; background: #181818; }
+        .outer-box { border-color: #ff007f; }
+        .highlight { color: #ff007f; font-weight: bold; }
+        .solfege-text { color: #ffe600; font-weight: bold; }
+        .sub-info { color: #00aaff; font-weight: bold; }
+        .rhythm-grid { font-size: 1.1rem; letter-spacing: 2px; word-break: break-all; margin-top: 5px; }
+        .hit { color: #00ffcc; font-weight: bold; }
+        .rest { color: #444444; }
+        .active-step { background: #00ffcc; color: #121212; border-radius: 3px; padding: 0 2px; }
+        .outer-hit { color: #ff007f; font-weight: bold; }
+        .outer-active-step { background: #ff007f; color: #fff; border-radius: 3px; padding: 0 2px; }
+    </style>
+</head>
+<body>
+    <h1>CRT Polytonal Clock Engine</h1>
+    <button id="start-btn">ENABLE AUDIO SYNC</button>
+    <div id="status">Audio Engine Standing By...</div>
+
+    <audio id="silent-keepalive" loop playsinline src="data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA="></audio>
+
+    <div class="display-container">
+        <div class="display-box">
+            <h3>INNER LOOP (60s Step)</h3>
+            <div>Master Tick: <span id="lbl-tick">0</span></div>
+            <div>Minute Sec: <span id="lbl-sec">0</span>s / 60s</div>
+            <div>Active Key: <span id="lbl-key" class="highlight">--</span></div>
+            <div>Mode Info: <span id="lbl-mode" class="highlight">--</span></div>
+            <div>Scale Solfège: <span id="lbl-scale-solf" class="solfege-text">--</span></div>
+            <div>Chord Name: <span id="lbl-chord-name" class="highlight">--</span></div>
+            <div>Active Chord: <span id="lbl-chord">--</span></div>
+            <div>Chord Solfège: <span id="lbl-chord-solf" class="solfege-text">--</span></div>
+            <div>Fixed-Do Solfège: <span id="lbl-fixed-solf" class="solfege-text">--</span></div>
+            <div>Sub-Root Drone: <span id="lbl-sub" class="sub-info">--</span></div>
+            <div>Infrasonic (O0): <span id="lbl-drone0" class="sub-info">--</span></div>
+            <div>Sub Tonic (O1): <span id="lbl-drone1" class="sub-info">--</span></div>
+            <br>
+            <div>Inner Euclidean: <span id="lbl-euc">--</span></div>
+            <div id="grid-inner-euc" class="rhythm-grid">--</div>
+        </div>
+
+        <div class="display-box outer-box">
+            <h3 style="color:#ff007f;">OUTER LOOP (+2 Oct / Macro Step)</h3>
+            <div>Outer Key: <span id="lbl-outer-key" class="highlight">--</span></div>
+            <div>Outer Mode: <span id="lbl-outer-mode" class="highlight">--</span></div>
+            <div>Outer Chord Name: <span id="lbl-outer-chord-name" class="highlight">--</span></div>
+            <div>Outer Chord: <span id="lbl-outer-chord">--</span></div>
+            <div>Outer Modal Solfège: <span id="lbl-outer-solf" class="solfege-text">--</span></div>
+            <div>Fixed-Do Solfège: <span id="lbl-outer-fixed-solf" class="solfege-text">--</span></div>
+            <br>
+            <div>Mod Dials: <span id="lbl-dials">--</span></div>
+            <div>Outer Euclidean (+30s): <span id="lbl-outer-euc">--</span></div>
+            <div id="grid-outer-euc" class="rhythm-grid">--</div>
+        </div>
+    </div>
+
+    <script>
+        const NOTE_SEMITONES = {
+            'C': -9, 'C#': -8, 'Db': -8, 'D': -7, 'D#': -6, 'Eb': -6,
+            'E': -5, 'F': -4, 'F#': -3, 'Gb': -3, 'G': -2, 'G#': -1,
+            'Ab': -1, 'A': 0, 'A#': 1, 'Bb': 1, 'B': 2
+        };
+
+        let audioCtx = null;
+        let ws = null;
+        
+        let droneOsc0 = null, droneGain0 = null;
+        let droneOsc1 = null, droneGain1 = null;
+        let subRootOsc = null, subRootGain = null;
+
+        function noteToFreq(noteStr, refA4) {
+            let name = noteStr.slice(0, -1);
+            let octave = parseInt(noteStr.slice(-1));
+            let semitones = NOTE_SEMITONES[name] + (octave - 4) * 12;
+            return refA4 * Math.pow(2.0, semitones / 12.0);
+        }
+
+        function initDrones(refA4) {
+            let now = audioCtx.currentTime;
+
+            droneOsc0 = audioCtx.createOscillator();
+            droneGain0 = audioCtx.createGain();
+            droneOsc0.type = 'sine';
+            droneOsc0.frequency.setValueAtTime(noteToFreq("C0", refA4), now);
+            droneGain0.gain.setValueAtTime(0.25, now);
+            droneOsc0.connect(droneGain0);
+            droneGain0.connect(audioCtx.destination);
+            droneOsc0.start(now);
+
+            droneOsc1 = audioCtx.createOscillator();
+            droneGain1 = audioCtx.createGain();
+            droneOsc1.type = 'sine';
+            droneOsc1.frequency.setValueAtTime(noteToFreq("C1", refA4), now);
+            droneGain1.gain.setValueAtTime(0.18, now);
+            droneOsc1.connect(droneGain1);
+            droneGain1.connect(audioCtx.destination);
+            droneOsc1.start(now);
+
+            subRootOsc = audioCtx.createOscillator();
+            subRootGain = audioCtx.createGain();
+            subRootOsc.type = 'sine';
+            subRootOsc.frequency.setValueAtTime(noteToFreq("C2", refA4), now);
+            subRootGain.gain.setValueAtTime(0.20, now);
+            subRootOsc.connect(subRootGain);
+            subRootGain.connect(audioCtx.destination);
+            subRootOsc.start(now);
+        }
+
+        function updateDroneFreqs(t0, t1, targetSubRootNote, refA4) {
+            let now = audioCtx.currentTime;
+            if (droneOsc0) droneOsc0.frequency.setTargetAtTime(noteToFreq(t0, refA4), now, 0.25);
+            if (droneOsc1) droneOsc1.frequency.setTargetAtTime(noteToFreq(t1, refA4), now, 0.25);
+            if (subRootOsc) subRootOsc.frequency.setTargetAtTime(noteToFreq(targetSubRootNote, refA4), now, 0.15);
+        }
+
+        function playTone(freq, duration, releaseTime = 2.5, volume = 0.35, oscType = 'sine') {
+            if (!audioCtx || audioCtx.state !== 'running') return;
+
+            let now = audioCtx.currentTime;
+            let startT = now + 0.01;
+
+            let osc1 = audioCtx.createOscillator();
+            let osc2 = audioCtx.createOscillator();
+            let gain = audioCtx.createGain();
+
+            osc1.type = oscType;
+            osc1.frequency.setValueAtTime(freq, startT);
+
+            osc2.type = 'sine';
+            osc2.frequency.setValueAtTime(freq * 2.0, startT);
+
+            gain.gain.setValueAtTime(volume * 0.5, startT);
+            let totalTime = startT + releaseTime;
+
+            gain.gain.exponentialRampToValueAtTime(0.0001, totalTime);
+
+            osc1.connect(gain);
+            osc2.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            osc1.start(startT);
+            osc2.start(startT);
+            osc1.stop(totalTime);
+            osc2.stop(totalTime);
+        }
+
+        function renderRhythmPattern(pattern, activeIdx, isOuter = false) {
+            return pattern.map((bit, idx) => {
+                let symbol = bit ? "●" : "○";
+                let isCurrent = idx === activeIdx;
+                let cssClass = isOuter ? (bit ? "outer-hit" : "rest") : (bit ? "hit" : "rest");
+                if (isCurrent) cssClass += isOuter ? " outer-active-step" : " active-step";
+                return `<span class="${cssClass}">${symbol}</span>`;
+            }).join(" ");
+        }
+
+        function setupMediaSession() {
+            if ('mediaSession' in navigator) {
+                navigator.mediaSession.metadata = new MediaMetadata({
+                    title: "Polytonal CRT Clock",
+                    artist: "Generative Audio Engine",
+                    album: "CRT Modal Ambient"
+                });
+                navigator.mediaSession.setActionHandler('play', () => {
+                    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+                });
+                navigator.mediaSession.setActionHandler('pause', () => {});
+            }
+        }
+
+        document.getElementById('start-btn').addEventListener('click', () => {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+
+            const silentAudio = document.getElementById('silent-keepalive');
+            silentAudio.play().then(() => {
+                setupMediaSession();
+            }).catch(e => console.log("Silent keepalive setup:", e));
+
+            document.getElementById('start-btn').style.display = 'none';
+            document.getElementById('status').innerText = 'Syncing with Server...';
+
+            initDrones(432.0);
+
+            let wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            let wsUrl = wsProtocol + '//' + window.location.hostname + ':65432';
+            ws = new WebSocket(wsUrl);
+
+            ws.onmessage = (event) => {
+                let data = JSON.parse(event.data);
+                
+                document.getElementById('lbl-tick').innerText = data.tick;
+                document.getElementById('lbl-sec').innerText = data.minute_tick;
+                document.getElementById('lbl-key').innerText = data.key;
+                document.getElementById('lbl-mode').innerText = data.mode;
+                document.getElementById('lbl-scale-solf').innerText = data.scale_solfege;
+                document.getElementById('lbl-chord-name').innerText = data.chord_name;
+                document.getElementById('lbl-chord').innerText = JSON.stringify(data.chord);
+                document.getElementById('lbl-chord-solf').innerText = JSON.stringify(data.chord_solfege);
+                document.getElementById('lbl-fixed-solf').innerText = JSON.stringify(data.fixed_solfege);
+                document.getElementById('lbl-sub').innerText = data.sub_root;
+                document.getElementById('lbl-drone0').innerText = data.drone_tonic_0;
+                document.getElementById('lbl-drone1').innerText = data.drone_tonic_1;
+
+                document.getElementById('lbl-outer-key').innerText = data.outer_key;
+                document.getElementById('lbl-outer-mode').innerText = data.outer_mode;
+                document.getElementById('lbl-outer-chord-name').innerText = data.outer_chord_name;
+                document.getElementById('lbl-outer-chord').innerText = JSON.stringify(data.outer_chord);
+                document.getElementById('lbl-outer-solf').innerText = JSON.stringify(data.outer_solfege);
+                document.getElementById('lbl-outer-fixed-solf').innerText = JSON.stringify(data.outer_fixed_solfege);
+
+                document.getElementById('lbl-dials').innerText = JSON.stringify(data.positions);
+                document.getElementById('lbl-euc').innerText = 
+                    data.v4_info + ' Step ' + data.v4_step + (data.v4_trig ? ' [HIT]' : ' [REST]');
+                document.getElementById('grid-inner-euc').innerHTML = 
+                    renderRhythmPattern(data.inner_pattern, data.v4_step, false);
+
+                document.getElementById('lbl-outer-euc').innerText = 
+                    data.v4_outer_info + ' Step ' + data.v4_step_outer + (data.v4_trig_outer ? ' [HIT]' : ' [REST]');
+                document.getElementById('grid-outer-euc').innerHTML = 
+                    renderRhythmPattern(data.outer_pattern, data.v4_step_outer, true);
+
+                document.getElementById('status').innerText = 'CONNECTED & SYNCHRONIZED';
+
+                updateDroneFreqs(data.drone_tonic_0, data.drone_tonic_1, data.sub_root, data.a4_freq);
+
+                // Lower/Inner Voices
+                data.inner_triad_trigs.forEach((trig, idx) => {
+                    if (trig) {
+                        let innerFreq = noteToFreq(data.chord[idx], data.a4_freq);
+                        playTone(innerFreq, 1.0, 3.5, 0.35, 'sine');
+                    }
+                });
+
+                // Upper/Outer Voices
+                data.outer_triad_trigs.forEach((trig, idx) => {
+                    if (trig) {
+                        let outerFreq = noteToFreq(data.outer_chord[idx], data.a4_freq);
+                        playTone(outerFreq, 1.0, 3.0, 0.15, 'triangle');
+                    }
+                });
+
+                // Inner Euclidean Trigger
+                if (data.v4_trig) {
+                    let freq = noteToFreq(data.chord[3], data.a4_freq);
+                    playTone(freq, 0.5, 2.0, 0.25, 'sine');
+                }
+
+                // Outer Euclidean Trigger
+                if (data.v4_trig_outer) {
+                    let outerFreq = noteToFreq(data.outer_chord[3], data.a4_freq);
+                    playTone(outerFreq, 0.5, 2.0, 0.15, 'triangle');
+                }
+            };
+        });
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && audioCtx) {
+                if (audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+            }
+        });
+    </script>
+</body>
+</html>

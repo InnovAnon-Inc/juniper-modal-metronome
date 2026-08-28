@@ -4,7 +4,11 @@ import asyncio
 import http.server
 import json
 import math
+import os
+import random
+import signal
 import socketserver
+import sys
 import threading
 import time
 import websockets
@@ -18,6 +22,13 @@ BPM = 60                       # 1 tick per second
 TICK_DURATION = 60.0 / BPM
 CHORD_DURATION_TICKS = 60      # Real-time minute (60s) per inner chord change
 A4_FREQ = 432.0                # Master Reference Pitch
+STATE_FILE = "clock_state.json"
+
+ALL_FAMILIES = [
+    "Major", "Harmonic Minor", "Melodic Minor",
+    "Harmonic Major", "Double Harmonic Major",
+    "Neapolitan Major", "Neapolitan Minor"
+]
 
 # ==========================================
 # BJORKLUND EUCLIDEAN RHYTHM ALGORITHM
@@ -73,7 +84,7 @@ class EuclideanProgression:
         self.current_repeat = 0
         self.step_in_pattern = 0
 
-    def tick(self, offset_ticks: int = 0) -> tuple[bool, int, int, int]:
+    def tick(self, offset_ticks: int = 0) -> tuple[bool, int, int, int, list[int]]:
         curr = self.sequence[self.seq_idx]
         pattern = curr["pattern"]
 
@@ -89,10 +100,10 @@ class EuclideanProgression:
                 self.current_repeat = 0
                 self.seq_idx = (self.seq_idx + 1) % len(self.sequence)
 
-        return hit, step_idx, curr["pulses"], curr["steps"]
+        return hit, step_idx, curr["pulses"], curr["steps"], pattern
 
 # ==========================================
-# HARMONICALLY ACCURATE DIATONIC SOLFEGE
+# HARMONIC & SOLFEGE ENGINE
 # ==========================================
 MAJOR_INTERVALS = [0, 2, 4, 5, 7, 9, 11]
 
@@ -104,6 +115,12 @@ EXACT_SOLFEGE = {
     (5, -1): "Se", (5, 0): "So", (5, 1): "Si",
     (6, -2): "Leh", (6, -1): "Le", (6, 0): "La",
     (7, -2): "Tas", (7, -1): "Te", (7, 0): "Ti"
+}
+
+FIXED_DO_MAP = {
+    0: "Do",  1: "Ra", 2: "Re",  3: "Me",
+    4: "Mi",  5: "Fa", 6: "Fi",  7: "So",
+    8: "Le",  9: "La", 10: "Te", 11: "Ti"
 }
 
 NOTE_NAMES = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B']
@@ -139,6 +156,30 @@ MODE_NAMES = {
 }
 
 CHORD_PROGRESSION_ORDER = [0, 3, 4, 5, 2, 1, 6]
+
+def identify_7th_chord(formatted_midis: list[int]) -> str:
+    root_midi = formatted_midis[0]
+    root_name = NOTE_NAMES[root_midi % 12]
+    intervals = tuple(sorted((m - root_midi) % 12 for m in formatted_midis[1:]))
+
+    quality_map = {
+        (4, 7, 11): "Maj7",
+        (3, 7, 10): "m7",
+        (4, 7, 10): "7",
+        (3, 6, 10): "m7b5",
+        (3, 6, 9):  "dim7",
+        (4, 8, 11): "Maj7#5",
+        (4, 8, 10): "7#5",
+        (3, 7, 11): "m(Maj7)",
+        (4, 6, 10): "7b5",
+        (4, 6, 11): "Maj7b5",
+        (3, 6, 11): "m(Maj7)b5",
+        (5, 7, 10): "7sus4",
+        (2, 7, 10): "7sus2",
+    }
+    
+    quality = quality_map.get(intervals, "7th Custom")
+    return f"{root_name} {quality}"
 
 def get_exact_modal_solfege(parent_name: str, mode_degree: int) -> list[str]:
     parent_pcs = PARENT_SCALES[parent_name]
@@ -211,15 +252,21 @@ def generate_diatonic_7th_chords(scale_pitches: list[int], mode_solfege: list[st
             prev_midi = candidate
 
         formatted_notes = []
+        fixed_solfege = []
         for m in formatted_midis:
             name = NOTE_NAMES[m % 12]
             octave = (m // 12) - 1
             formatted_notes.append(f"{name}{octave}")
+            fixed_solfege.append(FIXED_DO_MAP[m % 12])
+
+        chord_name = identify_7th_chord(formatted_midis)
 
         chords.append({
             "duration": CHORD_DURATION_TICKS,
             "notes": formatted_notes,
             "solfege": chord_solfege,
+            "fixed_solfege": fixed_solfege,
+            "chord_name": chord_name,
             "meta": meta
         })
     return chords
@@ -247,29 +294,96 @@ def build_parallel_chromatic_progression(families: list[str], octave_offset: int
     progression = []
     current_tonic_midi = 60
 
-    for cycle in range(12):
+    # Steps down by 1 semitone AFTER completing all 7 modes across all 7 families for a given key
+    for key_step in range(12):
         for family in families:
             progression.extend(generate_parallel_family_block(family, current_tonic_midi, octave_offset=octave_offset))
         current_tonic_midi -= 1
 
     return progression
+def build_descending_perpetual_progression(families: list[str], octave_offset: int = 0) -> list[dict]:
+    """
+    Builds a continuous descending progression:
+    - Steps down 1 semitone after EVERY scale family completes (7 modes).
+    - Cycles through the scale families continuously as key drops.
+    - Each key/family combo runs through its 7 modes in bright-to-dark order.
+    """
+    progression = []
+    current_tonic_midi = 60  # Start at C
+    family_idx = 0
+    num_families = len(families)
+
+    # To maintain a 4,116-chord total cycle length (4,116 minutes / ~68.6 hours):
+    # 7 chords * 7 modes * 84 family passes = 4,116 chords total
+    total_family_passes = 84
+
+    for _ in range(total_family_passes):
+        family = families[family_idx % num_families]
+
+        # Append the 49-chord block for this key + family combination
+        progression.extend(
+            generate_parallel_family_block(family, current_tonic_midi, octave_offset=octave_offset)
+        )
+
+        # Step down 1 semitone per completed family (perpetual darkening)
+        current_tonic_midi -= 1
+        family_idx += 1
+
+    return progression
 
 # ==========================================
-# WEBSOCKET STATE BROADCASTER
+# MASTER CLOCK & STATE MANAGEMENT
 # ==========================================
 CONNECTED_CLIENTS = set()
 
 class MasterClock:
-    def __init__(self, inner_prog, outer_prog, moduli=(3, 4, 5)):
-        self.inner_prog = inner_prog
-        self.outer_prog = outer_prog
+    def __init__(self, moduli=(3, 4, 5)):
         self.moduli = moduli
         self.master_tick = 0
-        
+        self.start_time = time.time()
+
+        self.inner_family_order = ALL_FAMILIES.copy()
+        self.outer_family_order = ALL_FAMILIES.copy()
+
+        self.load_state()
+
+        self.rebuild_progressions()
+
         self.inner_euc_engine = EuclideanProgression(step_cycles=list(range(3, 33)), repeats_per_rhythm=7, invert_pattern=False)
         self.outer_euc_engine = EuclideanProgression(step_cycles=list(range(3, 33)), repeats_per_rhythm=7, invert_pattern=True)
-        
-        self.start_time = time.time()
+
+    #def rebuild_progressions(self):
+    #    self.inner_prog = build_parallel_chromatic_progression(self.inner_family_order, octave_offset=0)
+    #    self.outer_prog = build_parallel_chromatic_progression(self.outer_family_order, octave_offset=2)
+    def rebuild_progressions(self):
+        self.inner_prog = build_descending_perpetual_progression(self.inner_family_order, octave_offset=0)
+        self.outer_prog = build_descending_perpetual_progression(self.outer_family_order, octave_offset=2)
+
+    def load_state(self):
+        if os.path.exists(STATE_FILE):
+            try:
+                with open(STATE_FILE, "r") as f:
+                    data = json.load(f)
+                    self.master_tick = data.get("master_tick", 0)
+                    self.start_time = time.time() - (self.master_tick * TICK_DURATION)
+                    self.inner_family_order = data.get("inner_family_order", ALL_FAMILIES.copy())
+                    self.outer_family_order = data.get("outer_family_order", ALL_FAMILIES.copy())
+                    print(f"[STATE] Resumed successfully from tick {self.master_tick}.")
+            except Exception as e:
+                print(f"[STATE] Error loading state file, starting fresh: {e}")
+
+    def save_state(self):
+        data = {
+            "master_tick": self.master_tick,
+            "inner_family_order": self.inner_family_order,
+            "outer_family_order": self.outer_family_order
+        }
+        try:
+            with open(STATE_FILE, "w") as f:
+                json.dump(data, f, indent=2)
+            print(f"[STATE] Saved state at tick {self.master_tick}.")
+        except Exception as e:
+            print(f"[STATE] Failed to save state: {e}")
 
     def get_sub_root_doubler(self, note_str: str) -> str:
         name = note_str[:-1]
@@ -285,14 +399,21 @@ class MasterClock:
             now = time.time()
             elapsed_seconds = int(now - self.start_time)
 
-            total_inner = len(self.inner_prog)
+            total_inner = len(self.inner_prog) # 4,116 chords
             total_outer = len(self.outer_prog)
 
-            # INNER LOOP: Steps every 60 seconds (1 minute per chord)
+            # Reshuffle families when completing a full cycle
+            if elapsed_seconds > 0 and elapsed_seconds % (total_inner * CHORD_DURATION_TICKS) == 0:
+                random.shuffle(self.inner_family_order)
+                random.shuffle(self.outer_family_order)
+                self.rebuild_progressions()
+                self.save_state()
+
+            # INNER LOOP: Steps every 60s
             inner_idx = (elapsed_seconds // CHORD_DURATION_TICKS) % total_inner
             inner_chord_data = self.inner_prog[inner_idx]
 
-            # OUTER LOOP: Steps once per FULL ITERATION of the inner loop progression
+            # OUTER LOOP: Macro progression
             outer_idx = (elapsed_seconds // (CHORD_DURATION_TICKS * total_inner)) % total_outer
             outer_chord_data = self.outer_prog[outer_idx]
 
@@ -303,8 +424,8 @@ class MasterClock:
 
             positions = [self.master_tick % m for m in self.moduli]
 
-            v4_trig_inner, v4_step_inner, pulses_in, total_steps_in = self.inner_euc_engine.tick(offset_ticks=0)
-            v4_trig_outer, v4_step_outer, pulses_out, total_steps_out = self.outer_euc_engine.tick(offset_ticks=30)
+            v4_trig_inner, v4_step_inner, pulses_in, total_steps_in, pattern_in = self.inner_euc_engine.tick(offset_ticks=0)
+            v4_trig_outer, v4_step_outer, pulses_out, total_steps_out, pattern_out = self.outer_euc_engine.tick(offset_ticks=30)
 
             sub_root_note = self.get_sub_root_doubler(inner_chord_data["notes"][0])
             tonic_0, tonic_1 = self.get_tonic_drones(inner_chord_data["meta"]["tonic_name"])
@@ -317,6 +438,8 @@ class MasterClock:
                 # Inner Main Loop
                 "chord": inner_chord_data["notes"],
                 "chord_solfege": inner_chord_data["solfege"],
+                "fixed_solfege": inner_chord_data["fixed_solfege"],
+                "chord_name": inner_chord_data["chord_name"],
                 "key": inner_chord_data["meta"]["key"],
                 "mode": inner_chord_data["meta"]["mode"],
                 "scale_solfege": inner_chord_data["meta"]["scale_solfege"],
@@ -324,6 +447,8 @@ class MasterClock:
                 # Outer Polytonal Loop
                 "outer_chord": outer_chord_data["notes"],
                 "outer_solfege": outer_chord_data["solfege"],
+                "outer_fixed_solfege": outer_chord_data["fixed_solfege"],
+                "outer_chord_name": outer_chord_data["chord_name"],
                 "outer_key": outer_chord_data["meta"]["key"],
                 "outer_mode": outer_chord_data["meta"]["mode"],
 
@@ -338,12 +463,19 @@ class MasterClock:
                 "positions": positions,
                 "v4_step": v4_step_inner,
                 "v4_info": f"E({pulses_in},{total_steps_in})",
+                "v4_step_outer": v4_step_outer,
+                "v4_outer_info": f"E({pulses_out},{total_steps_out})",
+                "inner_pattern": pattern_in,
+                "outer_pattern": pattern_out,
                 "a4_freq": A4_FREQ
             }
 
             if CONNECTED_CLIENTS:
                 payload = json.dumps(state)
                 await asyncio.gather(*[client.send(payload) for client in CONNECTED_CLIENTS], return_exceptions=True)
+
+            if self.master_tick % 60 == 0:
+                self.save_state()
 
             next_tick = self.start_time + self.master_tick * TICK_DURATION
             sleep_time = max(0.001, next_tick - time.time())
@@ -357,292 +489,23 @@ async def ws_handler(websocket):
         CONNECTED_CLIENTS.remove(websocket)
 
 # ==========================================
-# INLINE HTML WEBPAGE WITH POLYTONAL VIEWER
+# HTTP SERVER SETUP
 # ==========================================
-HTML_PAGE = """<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CRT Polytonal Clock Engine</title>
-    <style>
-        body { background: #121212; color: #00ffcc; font-family: monospace; text-align: center; padding: 20px; }
-        button { background: #00ffcc; color: #121212; border: none; padding: 15px 30px; font-size: 1.2rem; font-weight: bold; cursor: pointer; border-radius: 5px; }
-        #status { margin-top: 20px; font-size: 1.1rem; }
-        .display-container { display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; max-width: 1000px; margin: 20px auto; }
-        .display-box { border: 1px solid #00ffcc; padding: 15px; flex: 1; min-width: 300px; text-align: left; background: #181818; }
-        .outer-box { border-color: #ff007f; }
-        .highlight { color: #ff007f; font-weight: bold; }
-        .solfege-text { color: #ffe600; font-weight: bold; }
-        .sub-info { color: #00aaff; font-weight: bold; }
-    </style>
-</head>
-<body>
-    <h1>CRT Polytonal Clock Engine</h1>
-    <button id="start-btn">ENABLE AUDIO SYNC</button>
-    <div id="status">Audio Engine Standing By...</div>
-
-    <audio id="silent-keepalive" loop playsinline src="data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA="></audio>
-
-    <div class="display-container">
-        <div class="display-box">
-            <h3>INNER LOOP (60s Step)</h3>
-            <div>Master Tick: <span id="lbl-tick">0</span></div>
-            <div>Minute Sec: <span id="lbl-sec">0</span>s / 60s</div>
-            <div>Active Key: <span id="lbl-key" class="highlight">--</span></div>
-            <div>Mode Info: <span id="lbl-mode" class="highlight">--</span></div>
-            <div>Scale Solfège: <span id="lbl-scale-solf" class="solfege-text">--</span></div>
-            <div>Active Chord: <span id="lbl-chord">--</span></div>
-            <div>Chord Solfège: <span id="lbl-chord-solf" class="solfege-text">--</span></div>
-            <div>Sub-Root Drone: <span id="lbl-sub" class="sub-info">--</span></div>
-            <div>Infrasonic (O0): <span id="lbl-drone0" class="sub-info">--</span></div>
-            <div>Sub Tonic (O1): <span id="lbl-drone1" class="sub-info">--</span></div>
-        </div>
-
-        <div class="display-box outer-box">
-            <h3 style="color:#ff007f;">OUTER LOOP (+2 Oct / Macro Cycle Step)</h3>
-            <div>Outer Key: <span id="lbl-outer-key" class="highlight">--</span></div>
-            <div>Outer Mode: <span id="lbl-outer-mode" class="highlight">--</span></div>
-            <div>Outer Chord: <span id="lbl-outer-chord">--</span></div>
-            <div>Outer Solfège: <span id="lbl-outer-solf" class="solfege-text">--</span></div>
-            <br>
-            <div>Mod Dials: <span id="lbl-dials">--</span></div>
-            <div>Inner Euclidean: <span id="lbl-euc">--</span></div>
-            <div>Outer Euclidean (+30s): <span id="lbl-outer-euc">--</span></div>
-        </div>
-    </div>
-
-    <script>
-        const NOTE_SEMITONES = {
-            'C': -9, 'C#': -8, 'Db': -8, 'D': -7, 'D#': -6, 'Eb': -6,
-            'E': -5, 'F': -4, 'F#': -3, 'Gb': -3, 'G': -2, 'G#': -1,
-            'Ab': -1, 'A': 0, 'A#': 1, 'Bb': 1, 'B': 2
-        };
-
-        let audioCtx = null;
-        let ws = null;
-        
-        let droneOsc0 = null, droneGain0 = null;
-        let droneOsc1 = null, droneGain1 = null;
-        let subRootOsc = null, subRootGain = null;
-
-        function noteToFreq(noteStr, refA4) {
-            let name = noteStr.slice(0, -1);
-            let octave = parseInt(noteStr.slice(-1));
-            let semitones = NOTE_SEMITONES[name] + (octave - 4) * 12;
-            return refA4 * Math.pow(2.0, semitones / 12.0);
-        }
-
-        function initDrones(refA4) {
-            let now = audioCtx.currentTime;
-
-            droneOsc0 = audioCtx.createOscillator();
-            droneGain0 = audioCtx.createGain();
-            droneOsc0.type = 'sine';
-            droneOsc0.frequency.setValueAtTime(noteToFreq("C0", refA4), now);
-            droneGain0.gain.setValueAtTime(0.25, now);
-            droneOsc0.connect(droneGain0);
-            droneGain0.connect(audioCtx.destination);
-            droneOsc0.start(now);
-
-            droneOsc1 = audioCtx.createOscillator();
-            droneGain1 = audioCtx.createGain();
-            droneOsc1.type = 'sine';
-            droneOsc1.frequency.setValueAtTime(noteToFreq("C1", refA4), now);
-            droneGain1.gain.setValueAtTime(0.18, now);
-            droneOsc1.connect(droneGain1);
-            droneGain1.connect(audioCtx.destination);
-            droneOsc1.start(now);
-
-            subRootOsc = audioCtx.createOscillator();
-            subRootGain = audioCtx.createGain();
-            subRootOsc.type = 'sine';
-            subRootOsc.frequency.setValueAtTime(noteToFreq("C2", refA4), now);
-            subRootGain.gain.setValueAtTime(0.20, now);
-            subRootOsc.connect(subRootGain);
-            subRootGain.connect(audioCtx.destination);
-            subRootOsc.start(now);
-        }
-
-        function updateDroneFreqs(t0, t1, targetSubRootNote, refA4) {
-            let now = audioCtx.currentTime;
-            if (droneOsc0) droneOsc0.frequency.setTargetAtTime(noteToFreq(t0, refA4), now, 0.25);
-            if (droneOsc1) droneOsc1.frequency.setTargetAtTime(noteToFreq(t1, refA4), now, 0.25);
-            if (subRootOsc) subRootOsc.frequency.setTargetAtTime(noteToFreq(targetSubRootNote, refA4), now, 0.15);
-        }
-
-//        function playTone(freq, duration, releaseTime = 2.5, volume = 0.35, oscType = 'sine') {
-//            if (!audioCtx || audioCtx.state !== 'running') return;
-//            let startT = audioCtx.currentTime + 0.05;
-//
-//            let osc1 = audioCtx.createOscillator();
-//            let osc2 = audioCtx.createOscillator();
-//            let gain = audioCtx.createGain();
-//
-//            osc1.type = oscType;
-//            osc1.frequency.setValueAtTime(freq, startT);
-//            
-//            osc2.type = 'sine';
-//            osc2.frequency.setValueAtTime(freq * 2.0, startT);
-//
-//            gain.gain.setValueAtTime(volume * 0.5, startT);
-//            let totalTime = startT + releaseTime;
-//            gain.gain.exponentialRampToValueAtTime(0.0001, totalTime);
-//
-//            osc1.connect(gain);
-//            osc2.connect(gain);
-//            gain.connect(audioCtx.destination);
-//
-//            osc1.start(startT);
-//            osc2.start(startT);
-//            osc1.stop(totalTime);
-//            osc2.stop(totalTime);
-//        }
-function playTone(freq, duration, releaseTime = 2.5, volume = 0.35, oscType = 'sine') {
-    if (!audioCtx || audioCtx.state !== 'running') return;
-
-    // Ensure startT is never in the past relative to the current audio clock
-    let now = audioCtx.currentTime;
-    let startT = now + 0.01;
-
-    let osc1 = audioCtx.createOscillator();
-    let osc2 = audioCtx.createOscillator();
-    let gain = audioCtx.createGain();
-
-    osc1.type = oscType;
-    osc1.frequency.setValueAtTime(freq, startT);
-
-    osc2.type = 'sine';
-    osc2.frequency.setValueAtTime(freq * 2.0, startT);
-
-    gain.gain.setValueAtTime(volume * 0.5, startT);
-    let totalTime = startT + releaseTime;
-
-    // Prevent exponential ramp from starting below/at zero or in the past
-    gain.gain.exponentialRampToValueAtTime(0.0001, totalTime);
-
-    osc1.connect(gain);
-    osc2.connect(gain);
-    gain.connect(audioCtx.destination);
-
-    osc1.start(startT);
-    osc2.start(startT);
-    osc1.stop(totalTime);
-    osc2.stop(totalTime);
-}
-
-        function setupMediaSession() {
-            if ('mediaSession' in navigator) {
-                navigator.mediaSession.metadata = new MediaMetadata({
-                    title: "Polytonal CRT Clock",
-                    artist: "Generative Audio Engine",
-                    album: "CRT Modal Ambient"
-                });
-                navigator.mediaSession.setActionHandler('play', () => {
-                    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
-                });
-                navigator.mediaSession.setActionHandler('pause', () => {});
-            }
-        }
-
-        document.getElementById('start-btn').addEventListener('click', () => {
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            if (audioCtx.state === 'suspended') {
-                audioCtx.resume();
-            }
-
-            const silentAudio = document.getElementById('silent-keepalive');
-            silentAudio.play().then(() => {
-                setupMediaSession();
-            }).catch(e => console.log("Silent keepalive setup:", e));
-
-            document.getElementById('start-btn').style.display = 'none';
-            document.getElementById('status').innerText = 'Syncing with Server...';
-
-            initDrones(432.0);
-
-            let wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            let wsUrl = wsProtocol + '//' + window.location.hostname + ':65432';
-            ws = new WebSocket(wsUrl);
-
-            ws.onmessage = (event) => {
-                let data = JSON.parse(event.data);
-                
-                document.getElementById('lbl-tick').innerText = data.tick;
-                document.getElementById('lbl-sec').innerText = data.minute_tick;
-                document.getElementById('lbl-key').innerText = data.key;
-                document.getElementById('lbl-mode').innerText = data.mode;
-                document.getElementById('lbl-scale-solf').innerText = data.scale_solfege;
-                document.getElementById('lbl-chord').innerText = JSON.stringify(data.chord);
-                document.getElementById('lbl-chord-solf').innerText = JSON.stringify(data.chord_solfege);
-                document.getElementById('lbl-sub').innerText = data.sub_root;
-                document.getElementById('lbl-drone0').innerText = data.drone_tonic_0;
-                document.getElementById('lbl-drone1').innerText = data.drone_tonic_1;
-
-                document.getElementById('lbl-outer-key').innerText = data.outer_key;
-                document.getElementById('lbl-outer-mode').innerText = data.outer_mode;
-                document.getElementById('lbl-outer-chord').innerText = JSON.stringify(data.outer_chord);
-                document.getElementById('lbl-outer-solf').innerText = JSON.stringify(data.outer_solfege);
-
-                document.getElementById('lbl-dials').innerText = JSON.stringify(data.positions);
-                document.getElementById('lbl-euc').innerText = 
-                    data.v4_info + ' Step ' + data.v4_step + (data.v4_trig ? ' [HIT]' : ' [REST]');
-                document.getElementById('lbl-outer-euc').innerText = 
-                    (data.v4_trig_outer ? '[OUTER HIT]' : '[OUTER REST]');
-                document.getElementById('status').innerText = 'CONNECTED & SYNCHRONIZED';
-
-                updateDroneFreqs(data.drone_tonic_0, data.drone_tonic_1, data.sub_root, data.a4_freq);
-
-                // Lower/Inner Voices
-                data.inner_triad_trigs.forEach((trig, idx) => {
-                    if (trig) {
-                        let innerFreq = noteToFreq(data.chord[idx], data.a4_freq);
-                        playTone(innerFreq, 1.0, 3.5, 0.35, 'sine');
-                    }
-                });
-
-                // Upper/Outer Voices
-                data.outer_triad_trigs.forEach((trig, idx) => {
-                    if (trig) {
-                        let outerFreq = noteToFreq(data.outer_chord[idx], data.a4_freq);
-                        playTone(outerFreq, 1.0, 3.0, 0.15, 'triangle');
-                    }
-                });
-
-                // Inner Euclidean Trigger
-                if (data.v4_trig) {
-                    let freq = noteToFreq(data.chord[3], data.a4_freq);
-                    playTone(freq, 0.5, 2.0, 0.25, 'sine');
-                }
-
-                // Outer Euclidean Trigger
-                if (data.v4_trig_outer) {
-                    let outerFreq = noteToFreq(data.outer_chord[3], data.a4_freq);
-                    playTone(outerFreq, 0.5, 2.0, 0.15, 'triangle');
-                }
-            };
-        });
-
-        document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible' && audioCtx) {
-                if (audioCtx.state === 'suspended') {
-                    audioCtx.resume();
-                }
-            }
-        });
-    </script>
-</body>
-</html>
-"""
-
 class HTTPHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/html')
-        self.end_headers()
-        self.wfile.write(HTML_PAGE.encode('utf-8'))
+        if self.path in ('/', '/index.html'):
+            template_path = os.path.join('templates', 'index.html')
+            if os.path.exists(template_path):
+                self.send_response(200)
+                self.send_header('Content-type', 'text/html')
+                self.end_headers()
+                with open(template_path, 'rb') as f:
+                    self.wfile.write(f.read())
+                return
+        super().do_GET()
 
 def start_http_server():
+    os.makedirs('templates', exist_ok=True)
     with socketserver.TCPServer(("", HTTP_PORT), HTTPHandler) as httpd:
         print(f"[HTTP SERVER] Hosting Web Player on http://0.0.0.0:{HTTP_PORT}")
         httpd.serve_forever()
@@ -651,16 +514,15 @@ def start_http_server():
 # MAIN ENTRY POINT
 # ==========================================
 async def main():
-    ALL_FAMILIES = [
-        "Major", "Harmonic Minor", "Melodic Minor",
-        "Harmonic Major", "Double Harmonic Major",
-        "Neapolitan Major", "Neapolitan Minor"
-    ]
-    
-    inner_prog = build_parallel_chromatic_progression(ALL_FAMILIES, octave_offset=0)
-    outer_prog = build_parallel_chromatic_progression(ALL_FAMILIES, octave_offset=2)
-    
-    clock = MasterClock(inner_prog, outer_prog)
+    clock = MasterClock()
+
+    def handle_exit(signum, frame):
+        print("\n[SERVER] Shutting down...")
+        clock.save_state()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, handle_exit)
+    signal.signal(signal.SIGTERM, handle_exit)
 
     threading.Thread(target=start_http_server, daemon=True).start()
 
@@ -672,4 +534,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nServer terminated.")
+        pass
