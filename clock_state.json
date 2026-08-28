@@ -1,5 +1,5 @@
 {
-  "master_tick": 60,
+  "master_tick": 120,
   "inner_family_order": [
     "Major",
     "Harmonic Minor",
