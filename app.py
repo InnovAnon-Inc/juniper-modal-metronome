@@ -471,33 +471,65 @@ HTML_PAGE = """<!DOCTYPE html>
             if (subRootOsc) subRootOsc.frequency.setTargetAtTime(noteToFreq(targetSubRootNote, refA4), now, 0.15);
         }
 
-        function playTone(freq, duration, releaseTime = 2.5, volume = 0.35, oscType = 'sine') {
-            if (!audioCtx || audioCtx.state !== 'running') return;
-            let startT = audioCtx.currentTime + 0.05;
+//        function playTone(freq, duration, releaseTime = 2.5, volume = 0.35, oscType = 'sine') {
+//            if (!audioCtx || audioCtx.state !== 'running') return;
+//            let startT = audioCtx.currentTime + 0.05;
+//
+//            let osc1 = audioCtx.createOscillator();
+//            let osc2 = audioCtx.createOscillator();
+//            let gain = audioCtx.createGain();
+//
+//            osc1.type = oscType;
+//            osc1.frequency.setValueAtTime(freq, startT);
+//            
+//            osc2.type = 'sine';
+//            osc2.frequency.setValueAtTime(freq * 2.0, startT);
+//
+//            gain.gain.setValueAtTime(volume * 0.5, startT);
+//            let totalTime = startT + releaseTime;
+//            gain.gain.exponentialRampToValueAtTime(0.0001, totalTime);
+//
+//            osc1.connect(gain);
+//            osc2.connect(gain);
+//            gain.connect(audioCtx.destination);
+//
+//            osc1.start(startT);
+//            osc2.start(startT);
+//            osc1.stop(totalTime);
+//            osc2.stop(totalTime);
+//        }
+function playTone(freq, duration, releaseTime = 2.5, volume = 0.35, oscType = 'sine') {
+    if (!audioCtx || audioCtx.state !== 'running') return;
 
-            let osc1 = audioCtx.createOscillator();
-            let osc2 = audioCtx.createOscillator();
-            let gain = audioCtx.createGain();
+    // Ensure startT is never in the past relative to the current audio clock
+    let now = audioCtx.currentTime;
+    let startT = now + 0.01;
 
-            osc1.type = oscType;
-            osc1.frequency.setValueAtTime(freq, startT);
-            
-            osc2.type = 'sine';
-            osc2.frequency.setValueAtTime(freq * 2.0, startT);
+    let osc1 = audioCtx.createOscillator();
+    let osc2 = audioCtx.createOscillator();
+    let gain = audioCtx.createGain();
 
-            gain.gain.setValueAtTime(volume * 0.5, startT);
-            let totalTime = startT + releaseTime;
-            gain.gain.exponentialRampToValueAtTime(0.0001, totalTime);
+    osc1.type = oscType;
+    osc1.frequency.setValueAtTime(freq, startT);
 
-            osc1.connect(gain);
-            osc2.connect(gain);
-            gain.connect(audioCtx.destination);
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(freq * 2.0, startT);
 
-            osc1.start(startT);
-            osc2.start(startT);
-            osc1.stop(totalTime);
-            osc2.stop(totalTime);
-        }
+    gain.gain.setValueAtTime(volume * 0.5, startT);
+    let totalTime = startT + releaseTime;
+
+    // Prevent exponential ramp from starting below/at zero or in the past
+    gain.gain.exponentialRampToValueAtTime(0.0001, totalTime);
+
+    osc1.connect(gain);
+    osc2.connect(gain);
+    gain.connect(audioCtx.destination);
+
+    osc1.start(startT);
+    osc2.start(startT);
+    osc1.stop(totalTime);
+    osc2.stop(totalTime);
+}
 
         function setupMediaSession() {
             if ('mediaSession' in navigator) {
