@@ -16,7 +16,7 @@ import websockets
 # ==========================================
 # CONFIGURATION & TUNING
 # ==========================================
-HTTP_PORT = 8000
+HTTP_PORT = 5004
 WS_PORT = 65432
 BPM = 60                       # 1 tick per second
 TICK_DURATION = 60.0 / BPM
