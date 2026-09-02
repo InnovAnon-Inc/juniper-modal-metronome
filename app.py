@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+# FIXME all solfege needs to be fixed-do relative to the lowest drone, basically
+
 import asyncio
 import http.server
 import json
@@ -62,6 +64,43 @@ def get_coprime_pulses(steps: int) -> list[int]:
     if len(result) == 1:
         return result
     return result[1:]
+
+import cmath
+
+def is_regular_polygon(pattern: list[int], steps: int) -> bool:
+    k = sum(pattern)
+    if k < 3 or steps % k != 0:
+        return False
+    stride = steps // k
+    indices = [i for i, b in enumerate(pattern) if b]
+    expected = [(indices[0] + j * stride) % steps for j in range(k)]
+    return sorted(indices) == sorted(expected)
+
+def is_balanced_cyclotomic(pattern: list[int], steps: int, tol: float = 1e-5) -> bool:
+    # Centroid check (Class 1 balance)
+    total_vec = sum(cmath.exp(2j * math.pi * i / steps) for i, b in enumerate(pattern) if b)
+    if abs(total_vec) < tol:
+        return True
+
+    # Algebraic zero-sum check across DFT bins (Class 2 balance)
+    for k_bin in range(1, steps):
+        val = sum(cmath.exp(-2j * math.pi * k_bin * i / steps) for i, b in enumerate(pattern) if b)
+        if abs(val) < tol:
+            return True
+    return False
+
+def get_all_balanced_pulses(steps: int) -> list[int]:
+    pulses = []
+    for k in range(1, steps):
+        pattern = bjorklund(steps, k)
+        # Include coprime rhythms AND composite cyclotomic rhythms that aren't single regular polygons
+        if gcd(k, steps) == 1:
+            pulses.append(k)
+        elif is_balanced_cyclotomic(pattern, steps) and not is_regular_polygon(pattern, steps):
+            pulses.append(k)
+    return pulses
+
+# FIXME get_all_balanced_pulses is unused
 
 class EuclideanProgression:
     def __init__(self, step_cycles=list(range(3, 33)), repeats_per_rhythm=7, invert_pattern=False):
@@ -336,84 +375,179 @@ def build_descending_perpetual_progression(families: list[str], octave_offset: i
 # ==========================================
 CONNECTED_CLIENTS = set()
 
+#class MasterClock:
+#    def __init__(self, moduli=(3, 4, 5)):
+#        self.moduli = moduli
+#        self.master_tick = 0
+#        self.start_time = time.time()
+#
+#        self.inner_family_order = ALL_FAMILIES.copy()
+#        self.outer_family_order = ALL_FAMILIES.copy()
+#
+#        self.load_state()
+#
+#        self.rebuild_progressions()
+#
+#        self.inner_euc_engine = EuclideanProgression(step_cycles=list(range(3, 33)), repeats_per_rhythm=7, invert_pattern=False)
+#        self.outer_euc_engine = EuclideanProgression(step_cycles=list(range(3, 33)), repeats_per_rhythm=7, invert_pattern=True)
+#
+#    #def rebuild_progressions(self):
+#    #    self.inner_prog = build_parallel_chromatic_progression(self.inner_family_order, octave_offset=0)
+#    #    self.outer_prog = build_parallel_chromatic_progression(self.outer_family_order, octave_offset=2)
+#    def rebuild_progressions(self):
+#        self.inner_prog = build_descending_perpetual_progression(self.inner_family_order, octave_offset=0)
+#        self.outer_prog = build_descending_perpetual_progression(self.outer_family_order, octave_offset=2)
+#
+#    def load_state(self):
+#        if os.path.exists(STATE_FILE):
+#            try:
+#                with open(STATE_FILE, "r") as f:
+#                    data = json.load(f)
+#                    self.master_tick = data.get("master_tick", 0)
+#                    self.start_time = time.time() - (self.master_tick * TICK_DURATION)
+#                    self.inner_family_order = data.get("inner_family_order", ALL_FAMILIES.copy())
+#                    self.outer_family_order = data.get("outer_family_order", ALL_FAMILIES.copy())
+#                    print(f"[STATE] Resumed successfully from tick {self.master_tick}.")
+#            except Exception as e:
+#                print(f"[STATE] Error loading state file, starting fresh: {e}")
+#
+#    def save_state(self):
+#        data = {
+#            "master_tick": self.master_tick,
+#            "inner_family_order": self.inner_family_order,
+#            "outer_family_order": self.outer_family_order
+#        }
+#        try:
+#            with open(STATE_FILE, "w") as f:
+#                json.dump(data, f, indent=2)
+#            print(f"[STATE] Saved state at tick {self.master_tick}.")
+#        except Exception as e:
+#            print(f"[STATE] Failed to save state: {e}")
+#
+#    def get_sub_root_doubler(self, note_str: str) -> str:
+#        name = note_str[:-1]
+#        octave = int(note_str[-1])
+#        return f"{name}{max(1, octave - 1)}"
+#
+#    def get_tonic_drones(self, root_name: str) -> tuple[str, str]:
+#        return f"{root_name}0", f"{root_name}1"
+#
+#    async def run(self):
+#        while True:
+#            self.master_tick += 1
+#            now = time.time()
+#            elapsed_seconds = int(now - self.start_time)
+#
+#            total_inner = len(self.inner_prog) # 4,116 chords
+#            total_outer = len(self.outer_prog)
+#
+#            # Reshuffle families when completing a full cycle
+#            if elapsed_seconds > 0 and elapsed_seconds % (total_inner * CHORD_DURATION_TICKS) == 0:
+#                random.shuffle(self.inner_family_order)
+#                random.shuffle(self.outer_family_order)
+#                self.rebuild_progressions()
+#                self.save_state()
+#
+#            # INNER LOOP: Steps every 60s
+#            inner_idx = (elapsed_seconds // CHORD_DURATION_TICKS) % total_inner
+#            inner_chord_data = self.inner_prog[inner_idx]
+#
+#            # OUTER LOOP: Macro progression
+#            outer_idx = (elapsed_seconds // (CHORD_DURATION_TICKS * total_inner)) % total_outer
+#            outer_chord_data = self.outer_prog[outer_idx]
+#
+#            minute_tick = elapsed_seconds % CHORD_DURATION_TICKS
+#
+#            inner_triad_trigs = [self.master_tick % m == 0 for m in self.moduli]
+#            outer_triad_trigs = [(self.master_tick + 30) % m == 0 for m in self.moduli]
+#
+#            positions = [self.master_tick % m for m in self.moduli]
+#
+#            v4_trig_inner, v4_step_inner, pulses_in, total_steps_in, pattern_in = self.inner_euc_engine.tick(offset_ticks=0)
+#            v4_trig_outer, v4_step_outer, pulses_out, total_steps_out, pattern_out = self.outer_euc_engine.tick(offset_ticks=30)
+#
+#            sub_root_note = self.get_sub_root_doubler(inner_chord_data["notes"][0])
+#            tonic_0, tonic_1 = self.get_tonic_drones(inner_chord_data["meta"]["tonic_name"])
+#
+#            state = {
+#                "server_time": now,
+#                "tick": self.master_tick,
+#                "minute_tick": minute_tick,
+#
+#                # Inner Main Loop
+#                "chord": inner_chord_data["notes"],
+#                "chord_solfege": inner_chord_data["solfege"],
+#                "fixed_solfege": inner_chord_data["fixed_solfege"],
+#                "chord_name": inner_chord_data["chord_name"],
+#                "key": inner_chord_data["meta"]["key"],
+#                "mode": inner_chord_data["meta"]["mode"],
+#                "scale_solfege": inner_chord_data["meta"]["scale_solfege"],
+#
+#                # Outer Polytonal Loop
+#                "outer_chord": outer_chord_data["notes"],
+#                "outer_solfege": outer_chord_data["solfege"],
+#                "outer_fixed_solfege": outer_chord_data["fixed_solfege"],
+#                "outer_chord_name": outer_chord_data["chord_name"],
+#                "outer_key": outer_chord_data["meta"]["key"],
+#                "outer_mode": outer_chord_data["meta"]["mode"],
+#
+#                # Acoustics & Moduli Triggers
+#                "sub_root": sub_root_note,
+#                "drone_tonic_0": tonic_0,
+#                "drone_tonic_1": tonic_1,
+#                "inner_triad_trigs": inner_triad_trigs,
+#                "outer_triad_trigs": outer_triad_trigs,
+#                "v4_trig": v4_trig_inner,
+#                "v4_trig_outer": v4_trig_outer,
+#                "positions": positions,
+#                "v4_step": v4_step_inner,
+#                "v4_info": f"E({pulses_in},{total_steps_in})",
+#                "v4_step_outer": v4_step_outer,
+#                "v4_outer_info": f"E({pulses_out},{total_steps_out})",
+#                "inner_pattern": pattern_in,
+#                "outer_pattern": pattern_out,
+#                "a4_freq": A4_FREQ
+#            }
+#
+#            if CONNECTED_CLIENTS:
+#                payload = json.dumps(state)
+#                await asyncio.gather(*[client.send(payload) for client in CONNECTED_CLIENTS], return_exceptions=True)
+#
+#            if self.master_tick % 60 == 0:
+#                self.save_state()
+#
+#            next_tick = self.start_time + self.master_tick * TICK_DURATION
+#            sleep_time = max(0.001, next_tick - time.time())
+#            await asyncio.sleep(sleep_time)
 class MasterClock:
     def __init__(self, moduli=(3, 4, 5)):
         self.moduli = moduli
-        self.master_tick = 0
-        self.start_time = time.time()
-
         self.inner_family_order = ALL_FAMILIES.copy()
         self.outer_family_order = ALL_FAMILIES.copy()
-
-        self.load_state()
-
         self.rebuild_progressions()
 
         self.inner_euc_engine = EuclideanProgression(step_cycles=list(range(3, 33)), repeats_per_rhythm=7, invert_pattern=False)
         self.outer_euc_engine = EuclideanProgression(step_cycles=list(range(3, 33)), repeats_per_rhythm=7, invert_pattern=True)
 
-    #def rebuild_progressions(self):
-    #    self.inner_prog = build_parallel_chromatic_progression(self.inner_family_order, octave_offset=0)
-    #    self.outer_prog = build_parallel_chromatic_progression(self.outer_family_order, octave_offset=2)
     def rebuild_progressions(self):
         self.inner_prog = build_descending_perpetual_progression(self.inner_family_order, octave_offset=0)
         self.outer_prog = build_descending_perpetual_progression(self.outer_family_order, octave_offset=2)
 
-    def load_state(self):
-        if os.path.exists(STATE_FILE):
-            try:
-                with open(STATE_FILE, "r") as f:
-                    data = json.load(f)
-                    self.master_tick = data.get("master_tick", 0)
-                    self.start_time = time.time() - (self.master_tick * TICK_DURATION)
-                    self.inner_family_order = data.get("inner_family_order", ALL_FAMILIES.copy())
-                    self.outer_family_order = data.get("outer_family_order", ALL_FAMILIES.copy())
-                    print(f"[STATE] Resumed successfully from tick {self.master_tick}.")
-            except Exception as e:
-                print(f"[STATE] Error loading state file, starting fresh: {e}")
-
-    def save_state(self):
-        data = {
-            "master_tick": self.master_tick,
-            "inner_family_order": self.inner_family_order,
-            "outer_family_order": self.outer_family_order
-        }
-        try:
-            with open(STATE_FILE, "w") as f:
-                json.dump(data, f, indent=2)
-            print(f"[STATE] Saved state at tick {self.master_tick}.")
-        except Exception as e:
-            print(f"[STATE] Failed to save state: {e}")
-
-    def get_sub_root_doubler(self, note_str: str) -> str:
-        name = note_str[:-1]
-        octave = int(note_str[-1])
-        return f"{name}{max(1, octave - 1)}"
-
-    def get_tonic_drones(self, root_name: str) -> tuple[str, str]:
-        return f"{root_name}0", f"{root_name}1"
-
     async def run(self):
         while True:
-            self.master_tick += 1
             now = time.time()
-            elapsed_seconds = int(now - self.start_time)
+
+            # Lock tick to the absolute UTC second (1 tick / sec = 60 BPM)
+            self.master_tick = int(now)
+            elapsed_seconds = self.master_tick
 
             total_inner = len(self.inner_prog) # 4,116 chords
             total_outer = len(self.outer_prog)
 
-            # Reshuffle families when completing a full cycle
-            if elapsed_seconds > 0 and elapsed_seconds % (total_inner * CHORD_DURATION_TICKS) == 0:
-                random.shuffle(self.inner_family_order)
-                random.shuffle(self.outer_family_order)
-                self.rebuild_progressions()
-                self.save_state()
-
-            # INNER LOOP: Steps every 60s
+            # Deterministic index lookup based on global epoch time
             inner_idx = (elapsed_seconds // CHORD_DURATION_TICKS) % total_inner
             inner_chord_data = self.inner_prog[inner_idx]
 
-            # OUTER LOOP: Macro progression
             outer_idx = (elapsed_seconds // (CHORD_DURATION_TICKS * total_inner)) % total_outer
             outer_chord_data = self.outer_prog[outer_idx]
 
@@ -421,7 +555,6 @@ class MasterClock:
 
             inner_triad_trigs = [self.master_tick % m == 0 for m in self.moduli]
             outer_triad_trigs = [(self.master_tick + 30) % m == 0 for m in self.moduli]
-
             positions = [self.master_tick % m for m in self.moduli]
 
             v4_trig_inner, v4_step_inner, pulses_in, total_steps_in, pattern_in = self.inner_euc_engine.tick(offset_ticks=0)
@@ -474,11 +607,9 @@ class MasterClock:
                 payload = json.dumps(state)
                 await asyncio.gather(*[client.send(payload) for client in CONNECTED_CLIENTS], return_exceptions=True)
 
-            if self.master_tick % 60 == 0:
-                self.save_state()
-
-            next_tick = self.start_time + self.master_tick * TICK_DURATION
-            sleep_time = max(0.001, next_tick - time.time())
+            # Precise sub-second sleep to hit the top of the next exact Unix second
+            next_tick_time = math.floor(now) + 1.0
+            sleep_time = max(0.001, next_tick_time - time.time())
             await asyncio.sleep(sleep_time)
 
 async def ws_handler(websocket):

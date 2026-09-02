@@ -1,4 +1,5 @@
-fixed-do solfege for both "hands" should be relative to do=key tonic of the bass, so, e.g., C Lydian over E Ionian #5 would be Do-Re-Mi-Fa-Si-La-Ti-Do Do-Re-Mi-Fi-So-La-Ti-Do
+the 60 bpm pulse should occur every second, on the second
+fixed-do solfege for both "hands" should be relative to do=key tonic of the bass, so, e.g., C Lydian over E Ionian #5 would be Do-Re-Mi-Fa-Si-La-Ti-Do La-...
 solfege should be displayed for both hands
 front-end should include some sort of clockface with triangles, squares and pentagons to show when the 3-, 4- and 5-second voices will be played
 front-end should include some sort of clockface with circles to show when the bjorklund beats will occur
