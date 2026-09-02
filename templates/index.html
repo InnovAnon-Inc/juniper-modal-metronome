@@ -30,6 +30,7 @@
     <audio id="silent-keepalive" loop playsinline src="data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA="></audio>
 
     <div class="display-container">
+        <!-- INNER LOOP -->
         <div class="display-box">
             <h3>INNER LOOP (60s Step)</h3>
             <div>Master Tick: <span id="lbl-tick">0</span></div>
@@ -39,8 +40,7 @@
             <div>Scale Solfège: <span id="lbl-scale-solf" class="solfege-text">--</span></div>
             <div>Chord Name: <span id="lbl-chord-name" class="highlight">--</span></div>
             <div>Active Chord: <span id="lbl-chord">--</span></div>
-            <div>Chord Solfège: <span id="lbl-chord-solf" class="solfege-text">--</span></div>
-            <div>Fixed-Do Solfège: <span id="lbl-fixed-solf" class="solfege-text">--</span></div>
+            <div>Drone-Relative Solfège: <span id="lbl-fixed-solf" class="solfege-text">--</span></div>
             <div>Sub-Root Drone: <span id="lbl-sub" class="sub-info">--</span></div>
             <div>Infrasonic (O0): <span id="lbl-drone0" class="sub-info">--</span></div>
             <div>Sub Tonic (O1): <span id="lbl-drone1" class="sub-info">--</span></div>
@@ -49,14 +49,15 @@
             <div id="grid-inner-euc" class="rhythm-grid">--</div>
         </div>
 
+        <!-- OUTER LOOP -->
         <div class="display-box outer-box">
             <h3 style="color:#ff007f;">OUTER LOOP (+2 Oct / Macro Step)</h3>
             <div>Outer Key: <span id="lbl-outer-key" class="highlight">--</span></div>
             <div>Outer Mode: <span id="lbl-outer-mode" class="highlight">--</span></div>
+            <div>Outer Scale Solfège: <span id="lbl-outer-scale-solf" class="solfege-text">--</span></div>
             <div>Outer Chord Name: <span id="lbl-outer-chord-name" class="highlight">--</span></div>
             <div>Outer Chord: <span id="lbl-outer-chord">--</span></div>
-            <div>Outer Modal Solfège: <span id="lbl-outer-solf" class="solfege-text">--</span></div>
-            <div>Fixed-Do Solfège: <span id="lbl-outer-fixed-solf" class="solfege-text">--</span></div>
+            <div>Drone-Relative Solfège: <span id="lbl-outer-fixed-solf" class="solfege-text">--</span></div>
             <br>
             <div>Mod Dials: <span id="lbl-dials">--</span></div>
             <div>Outer Euclidean (+30s): <span id="lbl-outer-euc">--</span></div>
@@ -208,7 +209,6 @@
                 document.getElementById('lbl-scale-solf').innerText = data.scale_solfege;
                 document.getElementById('lbl-chord-name').innerText = data.chord_name;
                 document.getElementById('lbl-chord').innerText = JSON.stringify(data.chord);
-                document.getElementById('lbl-chord-solf').innerText = JSON.stringify(data.chord_solfege);
                 document.getElementById('lbl-fixed-solf').innerText = JSON.stringify(data.fixed_solfege);
                 document.getElementById('lbl-sub').innerText = data.sub_root;
                 document.getElementById('lbl-drone0').innerText = data.drone_tonic_0;
@@ -216,9 +216,9 @@
 
                 document.getElementById('lbl-outer-key').innerText = data.outer_key;
                 document.getElementById('lbl-outer-mode').innerText = data.outer_mode;
+                document.getElementById('lbl-outer-scale-solf').innerText = data.outer_scale_solfege || data.scale_solfege;
                 document.getElementById('lbl-outer-chord-name').innerText = data.outer_chord_name;
                 document.getElementById('lbl-outer-chord').innerText = JSON.stringify(data.outer_chord);
-                document.getElementById('lbl-outer-solf').innerText = JSON.stringify(data.outer_solfege);
                 document.getElementById('lbl-outer-fixed-solf').innerText = JSON.stringify(data.outer_fixed_solfege);
 
                 document.getElementById('lbl-dials').innerText = JSON.stringify(data.positions);

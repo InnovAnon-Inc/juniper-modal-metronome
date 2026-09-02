@@ -1,21 +1,21 @@
 {
-  "master_tick": 370021,
+  "master_tick": 1788326895,
   "inner_family_order": [
-    "Neapolitan Minor",
-    "Harmonic Major",
-    "Double Harmonic Major",
     "Major",
     "Harmonic Minor",
+    "Melodic Minor",
+    "Harmonic Major",
+    "Double Harmonic Major",
     "Neapolitan Major",
-    "Melodic Minor"
+    "Neapolitan Minor"
   ],
   "outer_family_order": [
-    "Neapolitan Major",
-    "Neapolitan Minor",
-    "Double Harmonic Major",
-    "Harmonic Major",
-    "Melodic Minor",
     "Major",
-    "Harmonic Minor"
+    "Harmonic Minor",
+    "Melodic Minor",
+    "Harmonic Major",
+    "Double Harmonic Major",
+    "Neapolitan Major",
+    "Neapolitan Minor"
   ]
 }
