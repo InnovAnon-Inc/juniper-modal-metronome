@@ -60,7 +60,6 @@ exclude = [
     "*.h",
     "*.ico",
     "*.html",
-    "*.lc",
 ]
 
 [tool.setuptools_scm]
