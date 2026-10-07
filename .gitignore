@@ -1,1 +1,7 @@
+*.egg-info/
+.pytest_cache/
+build/
+version.py
+__pycache__/
+*.so
 clock_state.json
