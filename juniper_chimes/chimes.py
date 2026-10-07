@@ -311,3 +311,170 @@ def compute_tone_rhythms_rh(minute_tick: int, is_7th_allowed: bool) -> list:
             "active": is_7th_allowed
         }
     ]
+
+#!/usr/bin/env python3
+import math
+
+class EDOEngine:
+    def __init__(self, edo_steps: int = 31, a4_freq: float = 432.0):
+        self.edo_steps = edo_steps
+        self.a4_freq = a4_freq
+        
+        # Perfect 5th generator in N-EDO
+        self.fifth_step = round(self.edo_steps * math.log2(1.5))
+        
+        # Diatonic scale via chain of 5ths (F, C, G, D, A, E, B) from C=0
+        raw_diatonic = [
+            (-self.fifth_step) % self.edo_steps,    # F (degree 4)
+            0,                                       # C (degree 1)
+            self.fifth_step % self.edo_steps,       # G (degree 5)
+            (2 * self.fifth_step) % self.edo_steps, # D (degree 2)
+            (3 * self.fifth_step) % self.edo_steps, # A (degree 6)
+            (4 * self.fifth_step) % self.edo_steps, # E (degree 3)
+            (5 * self.fifth_step) % self.edo_steps  # B (degree 7)
+        ]
+        self.major_scale = sorted(raw_diatonic)
+        
+        # Diatonic step sizes & chromatic alteration delta
+        self.W = self.major_scale[1] - self.major_scale[0]  # Major second (C->D)
+        self.H = self.major_scale[3] - self.major_scale[2]  # Diatonic semitone (E->F)
+        self.delta = self.W - self.H                       # Chromatic semitone (flat/sharp)
+        
+        # Dynamic Interval Definitions
+        self.m3 = self.major_scale[2] - self.delta
+        self.M3 = self.major_scale[2]
+        self.P4 = self.major_scale[3]
+        self.d5 = self.major_scale[4] - self.delta
+        self.P5 = self.major_scale[4]
+        self.a5 = self.major_scale[4] + self.delta
+        self.m7 = self.major_scale[6] - self.delta
+        self.M7 = self.major_scale[6]
+        self.d7 = self.major_scale[6] - (2 * self.delta)
+        
+        # Parent Scale Families parameterized for N-EDO
+        s = self.major_scale
+        d = self.delta
+        self.parent_scales = {
+            "Major":                 [s[0], s[1],     s[2],     s[3], s[4], s[5],     s[6]],
+            "Harmonic Minor":        [s[0], s[1],     s[2] - d, s[3], s[4], s[5] - d, s[6]],
+            "Melodic Minor":         [s[0], s[1],     s[2] - d, s[3], s[4], s[5],     s[6]],
+            "Harmonic Major":        [s[0], s[1],     s[2],     s[3], s[4], s[5] - d, s[6]],
+            "Double Harmonic Major": [s[0], s[1] - d, s[2],     s[3], s[4], s[5] - d, s[6]],
+            "Neapolitan Major":      [s[0], s[1] - d, s[2],     s[3], s[4], s[5],     s[6]],
+            "Neapolitan Minor":      [s[0], s[1] - d, s[2] - d, s[3], s[4], s[5] - d, s[6]],
+        }
+        
+        # Master Pitch Reference: Anchor A4 (4 octaves + A step)
+        a_pc = (3 * self.fifth_step) % self.edo_steps
+        self.a4_step = (4 * self.edo_steps) + a_pc
+
+    def edo_to_freq(self, step_val: int) -> float:
+        return self.a4_freq * math.pow(2.0, (step_val - self.a4_step) / float(self.edo_steps))
+
+    def get_note_name(self, step_val: int) -> str:
+        pc = step_val % self.edo_steps
+        octave = (step_val // self.edo_steps) - 1
+        
+        if self.edo_steps == 12:
+            names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+            return f"{names[pc]}{octave}"
+        elif self.edo_steps == 24:
+            names = ['C', 'C𝄳', 'Db', 'D𝄲', 'D', 'D𝄳', 'Eb', 'E𝄲', 'E', 'E𝄳', 'F', 'F𝄳',
+                     'F#', 'G𝄲', 'G', 'G𝄳', 'Ab', 'A𝄲', 'A', 'A𝄳', 'Bb', 'B𝄲', 'B', 'B𝄳']
+            return f"{names[pc]}{octave}"
+        else:
+            deg_names = ['C', 'D', 'E', 'F', 'G', 'A', 'B']
+            closest_deg = min(range(7), key=lambda i: min((pc - self.major_scale[i]) % self.edo_steps, (self.major_scale[i] - pc) % self.edo_steps))
+            diff = (pc - self.major_scale[closest_deg]) % self.edo_steps
+            if diff > self.edo_steps // 2:
+                diff -= self.edo_steps
+            acc = f"+{diff}" if diff > 0 else (f"{diff}" if diff < 0 else "")
+            return f"{deg_names[closest_deg]}{acc}_{octave}"
+
+    def get_solfege(self, step_val: int, drone_pc: int = 0) -> str:
+        pc = (step_val - drone_pc) % self.edo_steps
+        solfege_base = ["Do", "Re", "Mi", "Fa", "So", "La", "Ti"]
+        for idx, deg_pc in enumerate(self.major_scale):
+            if pc == deg_pc:
+                return solfege_base[idx]
+        closest = min(range(7), key=lambda i: (pc - self.major_scale[i]) % self.edo_steps)
+        offset = (pc - self.major_scale[closest]) % self.edo_steps
+        return f"{solfege_base[closest]}+{offset}" if offset > 0 else solfege_base[closest]
+
+    def identify_7th_chord(self, formatted_steps: list) -> str:
+        root_step = formatted_steps[0]
+        root_name = self.get_note_name(root_step)
+        intervals = sorted(((s - root_step) % self.edo_steps) for s in formatted_steps[1:])
+        i3, i5, i7 = intervals[0], intervals[1], intervals[2]
+        
+        if i3 == self.M3 and i5 == self.P5 and i7 == self.M7:
+            quality = "Maj7"
+        elif i3 == self.m3 and i5 == self.P5 and i7 == self.m7:
+            quality = "m7"
+        elif i3 == self.M3 and i5 == self.P5 and i7 == self.m7:
+            quality = "7"
+        elif i3 == self.m3 and i5 == self.d5 and i7 == self.m7:
+            quality = "m7b5"
+        elif i3 == self.m3 and i5 == self.d5 and i7 == self.d7:
+            quality = "dim7"
+        elif i3 == self.M3 and i5 == self.a5 and i7 == self.M7:
+            quality = "Maj7#5"
+        elif i3 == self.M3 and i5 == self.a5 and i7 == self.m7:
+            quality = "7#5"
+        elif i3 == self.m3 and i5 == self.P5 and i7 == self.M7:
+            quality = "m(Maj7)"
+        else:
+            quality = f"7th Custom ({self.edo_steps}-EDO)"
+            
+        return f"{root_name} {quality}"
+
+    def get_parallel_mode_pitches(self, parent_name: str, mode_degree: int, tonic_step: int) -> list:
+        scale = self.parent_scales[parent_name]
+        num_notes = len(scale)
+        mode_offset = scale[mode_degree - 1]
+        mode_indices = [(i + mode_degree - 1) % num_notes for i in range(num_notes)]
+        return [tonic_step + ((scale[idx] - mode_offset) % self.edo_steps) for idx in mode_indices]
+
+    def generate_diatonic_7th_chords(self, scale_pitches: list, meta: dict, tonic_step: int, perceived_drone_pc: int, octave_offset: int = 0) -> list:
+        chords = []
+        num_notes = len(scale_pitches)
+        progression_order = [0, 3, 4, 5, 2, 1, 6]
+        
+        for i in progression_order:
+            chord_steps = [
+                scale_pitches[i % num_notes],
+                scale_pitches[(i + 2) % num_notes],
+                scale_pitches[(i + 4) % num_notes],
+                scale_pitches[(i + 6) % num_notes]
+            ]
+            root_pc = chord_steps[0] % self.edo_steps
+            base_root_step = (5 * self.edo_steps) + (octave_offset * self.edo_steps) + root_pc
+            
+            formatted_steps = [base_root_step]
+            prev_step = base_root_step
+            
+            for step_val in chord_steps[1:]:
+                pc = step_val % self.edo_steps
+                interval = (pc - root_pc) % self.edo_steps
+                if interval == 0:
+                    interval = self.edo_steps
+                candidate = base_root_step + interval
+                while candidate <= prev_step:
+                    candidate += self.edo_steps
+                formatted_steps.append(candidate)
+                prev_step = candidate
+
+            formatted_notes = [self.get_note_name(s) for s in formatted_steps]
+            fixed_solfege = [self.get_solfege(s, drone_pc=perceived_drone_pc) for s in formatted_steps]
+            chord_name = self.identify_7th_chord(formatted_steps)
+
+            chords.append({
+                "duration": 60,
+                "notes": formatted_notes,
+                "steps": formatted_steps,
+                "solfege": fixed_solfege,
+                "fixed_solfege": fixed_solfege,
+                "chord_name": chord_name,
+                "meta": meta
+            })
+        return chords
