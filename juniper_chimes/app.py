@@ -31,6 +31,7 @@ from juniper_chimes.chimes import (
 HTTP_PORT = 5004
 WS_PORT = 65432
 POLYGONS_WS_URL = "ws://127.0.0.1:65403"
+#POLYGONS_WS_URL = "ws://polygons.innovanon.com:65403"
 
 BPM = 60                       # 1 tick per second
 TICK_DURATION = 60.0 / BPM
