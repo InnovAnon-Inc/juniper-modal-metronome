@@ -280,7 +280,7 @@ from juniper_chimes.chimes import (
     compute_tone_rhythms,
     compute_tone_rhythms_rh,
     edo24_to_freq_432,
-    generate_drones_for_chord,
+    #generate_drones_for_chord,
     get_fixed_do_solfege_24,
     EDOEngine,
 )
@@ -400,6 +400,7 @@ class MasterClock:
 
             minute_tick = elapsed_seconds % CHORD_DURATION_TICKS
 
+            # FIXME 24? 24 means any edo, right?
             inner_freqs = [edo24_to_freq_432(s) for s in inner_chord_data["steps"]]
             outer_freqs = [edo24_to_freq_432(s) for s in outer_chord_data["steps"]]
 
@@ -416,17 +417,22 @@ class MasterClock:
             rh_rhythms = compute_tone_rhythms_rh(minute_tick, rh_is_7th)
 
             # Master Pitch Anchor: Set Do to Left Hand's active tonic pitch class
-            lh_key_pc = inner_chord_data["meta"]["tonic_step"] % EDO_STEPS
+            #lh_key_pc = inner_chord_data["meta"]["tonic_step"] % EDO_STEPS
+            lh_key_pc = inner_chord_data["meta"]["tonic_step"] % self.engine.edo_steps
 
             # Left Hand Solfège
             lh_scale_pitches = inner_chord_data["meta"].get("scale_pitches", [])
+            # FIXME _24? _24 means any edo, right?
             lh_scale_solfege = " - ".join([get_fixed_do_solfege_24(p, drone_pc=lh_key_pc) for p in lh_scale_pitches]) if lh_scale_pitches else inner_chord_data["meta"]["scale_solfege"]
+            # FIXME _24? _24 means any edo, right?
             lh_chord_solfege = [get_fixed_do_solfege_24(s, drone_pc=lh_key_pc) for s in inner_chord_data["steps"]]
             lh_drones = generate_drones_for_chord(inner_chord_data, perceived_drone_pc=lh_key_pc)
 
             # Right Hand Solfège (Fixed to Left Hand's active tonic)
             rh_scale_pitches = outer_chord_data["meta"].get("scale_pitches", [])
+            # FIXME _24? _24 means any edo, right?
             rh_scale_solfege = " - ".join([get_fixed_do_solfege_24(p, drone_pc=lh_key_pc) for p in rh_scale_pitches]) if rh_scale_pitches else outer_chord_data["meta"]["scale_solfege"]
+            # FIXME _24? _24 means any edo, right?
             rh_chord_solfege = [get_fixed_do_solfege_24(s, drone_pc=lh_key_pc) for s in outer_chord_data["steps"]]
             rh_drones = generate_drones_for_chord(outer_chord_data, perceived_drone_pc=lh_key_pc)
 
@@ -434,7 +440,7 @@ class MasterClock:
                 "server_time": now,
                 "tick": self.master_tick,
                 "minute_tick": minute_tick,
-                "edo_system": "24-EDO",
+                "edo_system": "24-EDO", # FIXME it's parameterized now. currently 31
                 "a4_freq": A4_FREQ,
 
                 "metronome": {
@@ -559,6 +565,91 @@ class MasterClock:
 
         return progression
 
+#    async def run(self):
+#        while True:
+#            now = time.time()
+#            self.master_tick = int(now)
+#            elapsed_seconds = self.master_tick
+#
+#            total_inner = len(self.inner_prog)
+#            total_outer = len(self.outer_prog)
+#
+#            inner_idx = (elapsed_seconds // CHORD_DURATION_TICKS) % total_inner
+#            inner_chord_data = self.inner_prog[inner_idx]
+#
+#            outer_idx = (elapsed_seconds // (CHORD_DURATION_TICKS * total_inner)) % total_outer
+#            outer_chord_data = self.outer_prog[outer_idx]
+#
+#            minute_tick = elapsed_seconds % CHORD_DURATION_TICKS
+#
+#            inner_freqs = [self.engine.edo_to_freq(s) for s in inner_chord_data["steps"]]
+#            outer_freqs = [self.engine.edo_to_freq(s) for s in outer_chord_data["steps"]]
+#
+#            hits = self.polygon_state.get("hits", {})
+#            pos_hit = hits.get("left_hand_7th", False)
+#            neg_hit = hits.get("neg_hit", False)
+#
+#            lh_is_7th = pos_hit
+#            rh_is_7th = pos_hit and not neg_hit
+#
+#            lh_rhythms = compute_tone_rhythms(minute_tick, lh_is_7th)
+#            rh_rhythms = compute_tone_rhythms_rh(minute_tick, rh_is_7th)
+#
+#            lh_key_pc = inner_chord_data["meta"]["tonic_step"] % self.engine.edo_steps
+#
+#            lh_chord_solfege = [self.engine.get_solfege(s, drone_pc=lh_key_pc) for s in inner_chord_data["steps"]]
+#            rh_chord_solfege = [self.engine.get_solfege(s, drone_pc=lh_key_pc) for s in outer_chord_data["steps"]]
+#
+#            state = {
+#                "server_time": now,
+#                "tick": self.master_tick,
+#                "minute_tick": minute_tick,
+#                "edo_system": f"{self.engine.edo_steps}-EDO",
+#                "a4_freq": self.engine.a4_freq,
+#
+#                "metronome": {
+#                    "bpm": BPM,
+#                    "tick_duration_s": TICK_DURATION,
+#                    "is_second_pulse": True
+#                },
+#                "permissible_triggers": {
+#                    "left_hand_7th_allowed": lh_is_7th,
+#                    "right_hand_7th_allowed": rh_is_7th,
+#                    "neg_hit_trigger": neg_hit
+#                },
+#
+#                "polygon_sync": self.polygon_state,
+#
+#                "left_hand": {
+#                    "chord_name": inner_chord_data["chord_name"],
+#                    "notes": inner_chord_data["notes"],
+#                    "solfege": lh_chord_solfege,
+#                    "frequencies": inner_freqs,
+#                    "tone_rhythms": lh_rhythms,
+#                    "active_tone_mask": [r["active"] for r in lh_rhythms],
+#                    "key": inner_chord_data["meta"]["key"],
+#                    "mode": inner_chord_data["meta"]["mode"],
+#                },
+#
+#                "right_hand": {
+#                    "chord_name": outer_chord_data["chord_name"],
+#                    "notes": outer_chord_data["notes"],
+#                    "solfege": rh_chord_solfege,
+#                    "frequencies": outer_freqs,
+#                    "tone_rhythms": rh_rhythms,
+#                    "active_tone_mask": [r["active"] for r in rh_rhythms],
+#                    "key": outer_chord_data["meta"]["key"],
+#                    "mode": outer_chord_data["meta"]["mode"],
+#                }
+#            }
+#
+#            if CONNECTED_CLIENTS:
+#                payload = json.dumps(state)
+#                await asyncio.gather(*[client.send(payload) for client in CONNECTED_CLIENTS], return_exceptions=True)
+#
+#            next_tick_time = math.floor(now) + 1.0
+#            sleep_time = max(0.001, next_tick_time - time.time())
+#            await asyncio.sleep(sleep_time)
     async def run(self):
         while True:
             now = time.time()
@@ -594,6 +685,10 @@ class MasterClock:
             lh_chord_solfege = [self.engine.get_solfege(s, drone_pc=lh_key_pc) for s in inner_chord_data["steps"]]
             rh_chord_solfege = [self.engine.get_solfege(s, drone_pc=lh_key_pc) for s in outer_chord_data["steps"]]
 
+            # Compute drones dynamically via EDOEngine
+            lh_drones = self.engine.generate_drones_for_chord(inner_chord_data, perceived_drone_pc=lh_key_pc)
+            rh_drones = self.engine.generate_drones_for_chord(outer_chord_data, perceived_drone_pc=lh_key_pc)
+
             state = {
                 "server_time": now,
                 "tick": self.master_tick,
@@ -621,6 +716,7 @@ class MasterClock:
                     "frequencies": inner_freqs,
                     "tone_rhythms": lh_rhythms,
                     "active_tone_mask": [r["active"] for r in lh_rhythms],
+                    "drones": lh_drones,  # Restored
                     "key": inner_chord_data["meta"]["key"],
                     "mode": inner_chord_data["meta"]["mode"],
                 },
@@ -632,6 +728,7 @@ class MasterClock:
                     "frequencies": outer_freqs,
                     "tone_rhythms": rh_rhythms,
                     "active_tone_mask": [r["active"] for r in rh_rhythms],
+                    "drones": rh_drones,  # Restored
                     "key": outer_chord_data["meta"]["key"],
                     "mode": outer_chord_data["meta"]["mode"],
                 }
