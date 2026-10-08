@@ -232,37 +232,37 @@ def build_descending_circle_of_fifths_progression(
 
     return progression
 
-def generate_drones_for_chord(chord_data: dict, perceived_drone_pc: int = SYSTEM_DRONE_PC) -> dict:
-    key_tonic_step = chord_data["meta"].get("tonic_step", 120)
-    chord_root_step = chord_data["steps"][0]
+def generate_drones_for_chord(self, chord_data: dict, perceived_drone_pc: int = 0) -> dict:
+        key_tonic_step = chord_data["meta"].get("tonic_step", 5 * self.edo_steps)
+        chord_root_step = chord_data["steps"][0]
 
-    key_pc = key_tonic_step % EDO_STEPS
-    chord_pc = chord_root_step % EDO_STEPS
+        key_pc = key_tonic_step % self.edo_steps
+        chord_pc = chord_root_step % self.edo_steps
 
-    step_key_oct0 = (24 * 1) + key_pc        # Octave 0
-    step_key_oct1 = (24 * 2) + key_pc        # Octave 1
-    step_chord_oct2 = (24 * 3) + chord_pc    # Octave 2
+        step_key_oct0 = (self.edo_steps * 1) + key_pc        # Octave 0
+        step_key_oct1 = (self.edo_steps * 2) + key_pc        # Octave 1
+        step_chord_oct2 = (self.edo_steps * 3) + chord_pc    # Octave 2
 
-    return {
-        "key_drone_low": {
-            "note": f"{NOTE_NAMES_24[key_pc]}0",
-            "step": step_key_oct0,
-            "frequency": edo24_to_freq_432(step_key_oct0),
-            "solfege": get_fixed_do_solfege_24(step_key_oct0, perceived_drone_pc)
-        },
-        "key_drone_high": {
-            "note": f"{NOTE_NAMES_24[key_pc]}1",
-            "step": step_key_oct1,
-            "frequency": edo24_to_freq_432(step_key_oct1),
-            "solfege": get_fixed_do_solfege_24(step_key_oct1, perceived_drone_pc)
-        },
-        "chord_drone": {
-            "note": f"{NOTE_NAMES_24[chord_pc]}2",
-            "step": step_chord_oct2,
-            "frequency": edo24_to_freq_432(step_chord_oct2),
-            "solfege": get_fixed_do_solfege_24(step_chord_oct2, perceived_drone_pc)
+        return {
+            "key_drone_low": {
+                "note": self.get_note_name(step_key_oct0),
+                "step": step_key_oct0,
+                "frequency": self.edo_to_freq(step_key_oct0),
+                "solfege": self.get_solfege(step_key_oct0, perceived_drone_pc)
+            },
+            "key_drone_high": {
+                "note": self.get_note_name(step_key_oct1),
+                "step": step_key_oct1,
+                "frequency": self.edo_to_freq(step_key_oct1),
+                "solfege": self.get_solfege(step_key_oct1, perceived_drone_pc)
+            },
+            "chord_drone": {
+                "note": self.get_note_name(step_chord_oct2),
+                "step": step_chord_oct2,
+                "frequency": self.edo_to_freq(step_chord_oct2),
+                "solfege": self.get_solfege(step_chord_oct2, perceived_drone_pc)
+            }
         }
-    }
 
 def compute_tone_rhythms(minute_tick: int, is_7th_allowed: bool) -> list:
     return [
@@ -478,3 +478,35 @@ class EDOEngine:
                 "meta": meta
             })
         return chords
+
+    def generate_drones_for_chord(self, chord_data: dict, perceived_drone_pc: int = 0) -> dict:
+        key_tonic_step = chord_data["meta"].get("tonic_step", 5 * self.edo_steps)
+        chord_root_step = chord_data["steps"][0]
+
+        key_pc = key_tonic_step % self.edo_steps
+        chord_pc = chord_root_step % self.edo_steps
+
+        step_key_oct0 = (self.edo_steps * 1) + key_pc        # Octave 0
+        step_key_oct1 = (self.edo_steps * 2) + key_pc        # Octave 1
+        step_chord_oct2 = (self.edo_steps * 3) + chord_pc    # Octave 2
+
+        return {
+            "key_drone_low": {
+                "note": self.get_note_name(step_key_oct0),
+                "step": step_key_oct0,
+                "frequency": self.edo_to_freq(step_key_oct0),
+                "solfege": self.get_solfege(step_key_oct0, perceived_drone_pc)
+            },
+            "key_drone_high": {
+                "note": self.get_note_name(step_key_oct1),
+                "step": step_key_oct1,
+                "frequency": self.edo_to_freq(step_key_oct1),
+                "solfege": self.get_solfege(step_key_oct1, perceived_drone_pc)
+            },
+            "chord_drone": {
+                "note": self.get_note_name(step_chord_oct2),
+                "step": step_chord_oct2,
+                "frequency": self.edo_to_freq(step_chord_oct2),
+                "solfege": self.get_solfege(step_chord_oct2, perceived_drone_pc)
+            }
+        }
