@@ -271,7 +271,7 @@ import threading
 import time
 import websockets
 
-from juniper_chimes.chimes import (
+from .chimes import (
     ALL_FAMILIES,
     A4_FREQ,
     CHORD_DURATION_TICKS,
@@ -426,7 +426,8 @@ class MasterClock:
             lh_scale_solfege = " - ".join([get_fixed_do_solfege_24(p, drone_pc=lh_key_pc) for p in lh_scale_pitches]) if lh_scale_pitches else inner_chord_data["meta"]["scale_solfege"]
             # FIXME _24? _24 means any edo, right?
             lh_chord_solfege = [get_fixed_do_solfege_24(s, drone_pc=lh_key_pc) for s in inner_chord_data["steps"]]
-            lh_drones = generate_drones_for_chord(inner_chord_data, perceived_drone_pc=lh_key_pc)
+            #lh_drones = generate_drones_for_chord(inner_chord_data, perceived_drone_pc=lh_key_pc)
+            lh_drones = self.engine.generate_drones_for_chord(inner_chord_data, perceived_drone_pc=lh_key_pc)
 
             # Right Hand Solfège (Fixed to Left Hand's active tonic)
             rh_scale_pitches = outer_chord_data["meta"].get("scale_pitches", [])
@@ -434,7 +435,8 @@ class MasterClock:
             rh_scale_solfege = " - ".join([get_fixed_do_solfege_24(p, drone_pc=lh_key_pc) for p in rh_scale_pitches]) if rh_scale_pitches else outer_chord_data["meta"]["scale_solfege"]
             # FIXME _24? _24 means any edo, right?
             rh_chord_solfege = [get_fixed_do_solfege_24(s, drone_pc=lh_key_pc) for s in outer_chord_data["steps"]]
-            rh_drones = generate_drones_for_chord(outer_chord_data, perceived_drone_pc=lh_key_pc)
+            #rh_drones = generate_drones_for_chord(outer_chord_data, perceived_drone_pc=lh_key_pc)
+            rh_drones = self.engine.generate_drones_for_chord(outer_chord_data, perceived_drone_pc=lh_key_pc)
 
             state = {
                 "server_time": now,
